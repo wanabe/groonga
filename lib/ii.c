@@ -7260,21 +7260,36 @@ grn_ii_buffer_append(grn_ctx *ctx, grn_ii_buffer *ii_buffer,
 grn_rc
 grn_ii_buffer_commit(grn_ctx *ctx, grn_ii_buffer *ii_buffer)
 {
+  GRN_LOG(ctx, GRN_LOG_NOTICE, "grn_ii_buffer_commit: start");
+  GRN_LOG(ctx, GRN_LOG_NOTICE, "grn_ii_buffer_commit: block_pos: %u",
+          ii_buffer->block_pos);
   if (ii_buffer->block_pos) {
+    GRN_LOG(ctx, GRN_LOG_NOTICE, "grn_ii_buffer_commit: flush");
     grn_ii_buffer_flush(ctx, ii_buffer);
   }
+  GRN_LOG(ctx, GRN_LOG_NOTICE, "grn_ii_buffer_commit: tmpfd: %d",
+          ii_buffer->tmpfd);
   if (ii_buffer->tmpfd != -1) {
+    GRN_LOG(ctx, GRN_LOG_NOTICE, "grn_ii_buffer_commit: close tmpfd");
     GRN_CLOSE(ii_buffer->tmpfd);
   }
+  GRN_LOG(ctx, GRN_LOG_NOTICE, "grn_ii_buffer_commit: block_buf: %p",
+          ii_buffer->block_buf);
   if (ii_buffer->block_buf) {
+    GRN_LOG(ctx, GRN_LOG_NOTICE, "grn_ii_buffer_commit: free block_buf");
     GRN_FREE(ii_buffer->block_buf);
     ii_buffer->block_buf = NULL;
   }
+  GRN_LOG(ctx, GRN_LOG_NOTICE, "grn_ii_buffer_commit: counters: %p",
+          ii_buffer->block_buf);
   if (ii_buffer->counters) {
+    GRN_LOG(ctx, GRN_LOG_NOTICE, "grn_ii_buffer_commit: free counters");
     GRN_FREE(ii_buffer->counters);
     ii_buffer->counters = NULL;
   }
 
+  GRN_LOG(ctx, GRN_LOG_NOTICE, "grn_ii_buffer_commit: update_buffer_size: %lu",
+          ii_buffer->update_buffer_size);
   if (ii_buffer->update_buffer_size &&
       ii_buffer->update_buffer_size < 20) {
     if (ii_buffer->update_buffer_size < 10) {
@@ -7290,22 +7305,30 @@ grn_ii_buffer_commit(grn_ctx *ctx, grn_ii_buffer *ii_buffer)
           "nblocks=%d, update_buffer_size=%" GRN_FMT_INT64U,
           ii_buffer->nblocks, ii_buffer->update_buffer_size);
 
-  datavec_init(ctx, ii_buffer->data_vectors, ii_buffer->ii->n_elements, 0, 0);
+  GRN_LOG(ctx, GRN_LOG_NOTICE, "grn_ii_buffer_commit: datavec_init");
+  {
+    grn_rc rc;
+    rc = datavec_init(ctx, ii_buffer->data_vectors, ii_buffer->ii->n_elements, 0, 0);
+    GRN_LOG(ctx, GRN_LOG_NOTICE, "grn_ii_buffer_commit: datavec_init: %d", rc);
+  }
 #ifdef WIN32
   ii_buffer->tmpfd = GRN_OPEN(ii_buffer->tmpfpath, O_RDONLY|O_BINARY);
 #else /* WIN32 */
   ii_buffer->tmpfd = GRN_OPEN(ii_buffer->tmpfpath, O_RDONLY);
 #endif /* WIN32 */
+  GRN_LOG(ctx, GRN_LOG_NOTICE, "grn_ii_buffer_commit: opened tmpfd: %d", ii_buffer->tmpfd);
   if (ii_buffer->tmpfd == -1) {
     SERR("oepn");
     return ctx->rc;
   }
+  GRN_LOG(ctx, GRN_LOG_NOTICE, "grn_ii_buffer_commit: fetch: %d", ii_buffer->nblocks);
   {
     uint32_t i;
     for (i = 0; i < ii_buffer->nblocks; i++) {
       grn_ii_buffer_fetch(ctx, ii_buffer, &ii_buffer->blocks[i]);
     }
   }
+  GRN_LOG(ctx, GRN_LOG_NOTICE, "grn_ii_buffer_commit: hits: %d", ii_buffer->nblocks);
   {
     ii_buffer_block **hits;
     if ((hits = GRN_MALLOCN(ii_buffer_block *, ii_buffer->nblocks))) {
@@ -7335,6 +7358,7 @@ grn_ii_buffer_commit(grn_ctx *ctx, grn_ii_buffer *ii_buffer)
       GRN_FREE(hits);
     }
   }
+  GRN_LOG(ctx, GRN_LOG_NOTICE, "grn_ii_buffer_commit: databec_fin");
   datavec_fin(ctx, ii_buffer->data_vectors);
   GRN_LOG(ctx, GRN_LOG_NOTICE,
           "tmpfile_size:%jd > total_chunk_size:%" GRN_FMT_INT64U,
