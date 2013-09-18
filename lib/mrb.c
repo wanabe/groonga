@@ -23,8 +23,6 @@
 # include <mruby/proc.h>
 # include <mruby/compile.h>
 #endif
-grn_rc
-grn_plugin_register_without_db(grn_ctx *ctx, const char *name);
 
 #ifdef GRN_WITH_MRUBY
 void
@@ -38,7 +36,7 @@ grn_ctx_impl_mrb_init(grn_ctx *ctx)
     path = grn_plugin_find_path(ctx, mruby_plugin_name);
     if (path) {
       GRN_FREE(path);
-      grn_plugin_register_without_db(ctx, mruby_plugin_name);
+      grn_plugin_register(ctx, mruby_plugin_name);
     }
   } else {
     ctx->impl->mrb = NULL;

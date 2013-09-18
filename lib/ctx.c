@@ -1291,7 +1291,6 @@ grn_init(void)
     GRN_LOG(ctx, GRN_LOG_ALERT, "plugins initialize failed (%d)", rc);
     return rc;
   }
-  grn_ctx_impl_mrb_init(ctx);
   if ((rc = grn_normalizer_init())) {
     GRN_LOG(ctx, GRN_LOG_ALERT, "grn_normalizer_init failed (%d)", rc);
     return rc;
@@ -2349,6 +2348,7 @@ grn_ctx_use(grn_ctx *ctx, grn_obj *db)
         grn_obj_get_info(ctx, db, GRN_INFO_ENCODING, &buf);
         ctx->encoding = *(grn_encoding *)GRN_BULK_HEAD(&buf);
         grn_obj_close(ctx, &buf);
+        grn_ctx_impl_mrb_init(ctx);
       }
     }
   }
