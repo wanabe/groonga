@@ -23,6 +23,8 @@
 # include <mruby/proc.h>
 # include <mruby/compile.h>
 #endif
+grn_rc
+grn_plugin_register_without_db(grn_ctx *ctx, const char *name);
 
 #ifdef GRN_WITH_MRUBY
 void
@@ -31,7 +33,13 @@ grn_ctx_impl_mrb_init(grn_ctx *ctx)
   const char *grn_mruby_enabled;
   grn_mruby_enabled = getenv("GRN_MRUBY_ENABLED");
   if (grn_mruby_enabled && strcmp(grn_mruby_enabled, "yes") == 0) {
-    ctx->impl->mrb = mrb_open();
+    const char *mruby_plugin_name = "scaninfo_builders/mruby";
+    char *path;
+    path = grn_plugin_find_path(ctx, mruby_plugin_name);
+    if (path) {
+      GRN_FREE(path);
+      grn_plugin_register_without_db(ctx, mruby_plugin_name);
+    }
   } else {
     ctx->impl->mrb = NULL;
   }

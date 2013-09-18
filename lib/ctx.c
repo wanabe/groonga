@@ -511,8 +511,6 @@ grn_ctx_impl_init(grn_ctx *ctx)
 #ifdef GRN_WITH_MESSAGE_PACK
   msgpack_packer_init(&ctx->impl->msgpacker, ctx, grn_msgpack_buffer_write);
 #endif
-
-  grn_ctx_impl_mrb_init(ctx);
 }
 
 void
@@ -1293,6 +1291,7 @@ grn_init(void)
     GRN_LOG(ctx, GRN_LOG_ALERT, "plugins initialize failed (%d)", rc);
     return rc;
   }
+  grn_ctx_impl_mrb_init(ctx);
   if ((rc = grn_normalizer_init())) {
     GRN_LOG(ctx, GRN_LOG_ALERT, "grn_normalizer_init failed (%d)", rc);
     return rc;

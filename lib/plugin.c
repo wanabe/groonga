@@ -511,6 +511,25 @@ grn_plugin_register(grn_ctx *ctx, const char *name)
   GRN_API_RETURN(rc);
 }
 
+grn_rc
+grn_plugin_register_without_db(grn_ctx *ctx, const char *name)
+{
+  grn_rc rc;
+  static const grn_db dummy = {{{GRN_DB}}};
+
+  if (ctx && ctx->impl) {
+    grn_obj *db = ctx->impl->db;
+    if (!db) {
+      ctx->impl->db = &dummy;
+    }
+    rc = grn_plugin_register(ctx, name);
+    if (!db) {
+      ctx->impl->db = NULL;
+    }
+  }
+  return rc;
+}
+
 void *
 grn_plugin_malloc(grn_ctx *ctx, size_t size, const char *file, int line,
                   const char *func)
