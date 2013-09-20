@@ -18,6 +18,7 @@
 
 #include "mrb.h"
 #include "ctx_impl.h"
+#include "db.h"
 
 #ifdef GRN_WITH_MRUBY
 # include <mruby/proc.h>
@@ -35,8 +36,14 @@ grn_ctx_impl_mrb_init(grn_ctx *ctx)
     char *path;
     path = grn_plugin_find_path(ctx, mruby_plugin_name);
     if (path) {
+      grn_proc_ctx *pctx_ptr;
       GRN_FREE(path);
       grn_plugin_register(ctx, mruby_plugin_name);
+      pctx_ptr = GRN_MALLOC(sizeof(grn_proc_ctx));
+      pctx_ptr->user_data.ptr = NULL;
+      pctx_ptr->proc = grn_ctx_get(ctx, "BuildMruby", 10);
+      pctx_ptr->proc->funcs[PROC_INIT](ctx, 0, NULL, &pctx_ptr->user_data);
+      ctx->impl->mrb = pctx_ptr;
     }
   } else {
     ctx->impl->mrb = NULL;
@@ -47,7 +54,9 @@ void
 grn_ctx_impl_mrb_fin(grn_ctx *ctx)
 {
   if (ctx->impl->mrb) {
-    mrb_close(ctx->impl->mrb);
+    grn_proc_ctx *pctx_ptr = ctx->impl->mrb;
+    pctx_ptr->proc->funcs[PROC_FIN](ctx, 0, NULL, &pctx_ptr->user_data);
+    GRN_FREE(pctx_ptr);
     ctx->impl->mrb = NULL;
   }
 }

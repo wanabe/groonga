@@ -176,7 +176,7 @@ struct _grn_ctx_impl {
   msgpack_packer msgpacker;
 #endif
 #ifdef GRN_WITH_MRUBY
-  mrb_state *mrb;
+  grn_obj *mrb;
 #endif
 };
 

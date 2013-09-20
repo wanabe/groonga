@@ -29,6 +29,7 @@
 #include "string_in.h"
 #include "normalizer_in.h"
 #include "util.h"
+#include "mrb.h"
 #include <string.h>
 #include <float.h>
 
@@ -266,6 +267,9 @@ grn_db_open(grn_ctx *ctx, const char *path)
 #endif
           grn_db_init_builtin_tokenizers(ctx);
           grn_db_init_builtin_normalizers(ctx);
+#ifdef GRN_WITH_MRUBY
+          grn_ctx_impl_mrb_init(ctx);
+#endif
           grn_db_init_builtin_query(ctx);
           GRN_API_RETURN((grn_obj *)s);
         }
@@ -316,6 +320,9 @@ grn_db_close(grn_ctx *ctx, grn_obj *db)
   if (!s) { return GRN_INVALID_ARGUMENT; }
   GRN_API_ENTER;
   ctx_used_db = ctx->impl && ctx->impl->db == db;
+#ifdef GRN_WITH_MRUBY
+  grn_ctx_impl_mrb_fin(ctx);
+#endif
   if (ctx_used_db) {
     grn_ctx_loader_clear(ctx);
     if (ctx->impl->parser) {
@@ -8494,6 +8501,9 @@ grn_db_init_builtin_types(grn_ctx *ctx)
 #endif
   grn_db_init_builtin_tokenizers(ctx);
   grn_db_init_builtin_normalizers(ctx);
+#ifdef GRN_WITH_MRUBY
+  grn_ctx_impl_mrb_init(ctx);
+#endif
   for (id = grn_db_curr_id(ctx, db) + 1; id < 128; id++) {
     grn_itoh(id, buf + 3, 2);
     grn_obj_register(ctx, db, buf, 5);

@@ -635,7 +635,6 @@ grn_ctx_fin(grn_ctx *ctx)
     if (ctx->impl->finalizer) {
       ctx->impl->finalizer(ctx, 0, NULL, &(ctx->user_data));
     }
-    grn_ctx_impl_mrb_fin(ctx);
     grn_ctx_loader_clear(ctx);
     if (ctx->impl->parser) {
       grn_expr_parser_close(ctx);
@@ -2348,7 +2347,6 @@ grn_ctx_use(grn_ctx *ctx, grn_obj *db)
         grn_obj_get_info(ctx, db, GRN_INFO_ENCODING, &buf);
         ctx->encoding = *(grn_encoding *)GRN_BULK_HEAD(&buf);
         grn_obj_close(ctx, &buf);
-        grn_ctx_impl_mrb_init(ctx);
       }
     }
   }
