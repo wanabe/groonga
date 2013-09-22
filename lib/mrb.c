@@ -29,39 +29,7 @@
 #endif
 
 #ifdef GRN_WITH_MRUBY
-static mrb_value
-grn_mrb_scan_info_build(mrb_state *mrb, mrb_value self)
-{
-  mrb_value expr, var, n;
-  mrb_int op, size;
-  mrb_get_args(mrb, "oooii", &expr, &var, &n, &op, &size);
-  if (scan_info_build_with_mrb(mrb->ud, DATA_PTR(self), DATA_PTR(expr),
-                               DATA_PTR(var), mrb_voidp(n), op, size)) {
-    return mrb_true_value();
-  }
-  return mrb_false_value();
-}
-
-static struct mrb_data_type mrb_scaninfov_type = { "ScaninfoVector", NULL };
-static struct mrb_data_type mrb_expr_type = { "Expr", NULL };
-static struct mrb_data_type mrb_obj_type = { "Obj", NULL };
-
-static void
-grn_mrb_init_expr(grn_ctx *ctx)
-{
-  mrb_state *mrb = ctx->impl->mrb;
-  struct RClass *klass;
-  klass = mrb_define_class(mrb, "ScaninfoVector", mrb->object_class);
-  MRB_SET_INSTANCE_TT(klass, MRB_TT_DATA);
-  mrb_iv_set(mrb, mrb_obj_value(klass), mrb_intern(mrb, "type"), mrb_voidp_value(&mrb_scaninfov_type));
-  mrb_define_method(mrb, klass, "build", grn_mrb_scan_info_build, ARGS_REQ(5));
-  klass = mrb_define_class(mrb, "Expr", mrb->object_class);
-  MRB_SET_INSTANCE_TT(klass, MRB_TT_DATA);
-  mrb_iv_set(mrb, mrb_obj_value(klass), mrb_intern(mrb, "type"), mrb_voidp_value(&mrb_expr_type));
-  klass = mrb_define_class(mrb, "Obj", mrb->object_class);
-  MRB_SET_INSTANCE_TT(klass, MRB_TT_DATA);
-  mrb_iv_set(mrb, mrb_obj_value(klass), mrb_intern(mrb, "type"), mrb_voidp_value(&mrb_obj_type));
-}
+void grn_mrb_init_expr(grn_ctx *ctx);
 
 void
 grn_ctx_impl_mrb_init(grn_ctx *ctx)
@@ -111,20 +79,6 @@ grn_mrb_eval(grn_ctx *ctx, const char *script, int script_length)
   return result;
 }
 
-int
-grn_mrb_send(grn_ctx *ctx, void *buf, const char *mname)
-{
-  int ret;
-  mrb_state *mrb = ctx->impl->mrb;
-  mrb_value ary, self, *args;
-  ary = mrb_obj_value(buf);
-  self = RARRAY_PTR(ary)[1];
-  args = RARRAY_PTR(ary) + 2;
-  ret = mrb_test(mrb_funcall_argv(mrb, self, mrb_intern(mrb, mname), RARRAY_LEN(ary) - 2, args));
-  mrb_gc_arena_restore(mrb, mrb_fixnum(RARRAY_PTR(ary)[0]));
-  return ret;
-}
-
 grn_rc
 grn_mrb_to_grn(grn_ctx *ctx, mrb_value mrb_object, grn_obj *grn_object)
 {
@@ -143,39 +97,16 @@ grn_mrb_to_grn(grn_ctx *ctx, mrb_value mrb_object, grn_obj *grn_object)
   return rc;
 }
 
-void *
-grn_mrb_get_argbuf(grn_ctx *ctx)
+mrb_value
+grn_mrb_obj_new(mrb_state *mrb, void *ptr, const char *cname)
 {
-  mrb_state *mrb = ctx->impl->mrb;
-  int ai = mrb_gc_arena_save(mrb);
-  mrb_value ary = mrb_ary_new(mrb);
-  mrb_ary_push(mrb, ary, mrb_fixnum_value(ai));
- return mrb_ary_ptr(ary);
+  mrb_value obj, type;
+  struct RClass *klass = mrb_class_get(mrb, cname);
+  type  = mrb_iv_get(mrb, mrb_obj_value(klass), mrb_intern(mrb, "type"));
+  obj = mrb_obj_value(Data_Wrap_Struct(mrb, klass, mrb_voidp(type), ptr));
+  return obj;
 }
 
-void
-grn_mrb_push_ptr(grn_ctx *ctx, void *buf, void *ptr, const char *cname)
-{
-  mrb_state *mrb = ctx->impl->mrb;
-  mrb_value obj;
-  if (cname) {
-    struct RClass *klass = mrb_class_get(mrb, cname);
-    mrb_value type = mrb_iv_get(mrb, mrb_obj_value(klass), mrb_intern(mrb, "type"));
-    obj = mrb_obj_value(Data_Wrap_Struct(mrb, klass, mrb_voidp(type), ptr));
-  } else {
-    obj = mrb_voidp_value(ptr);
-  }
-  mrb_ary_push(mrb, mrb_obj_value(buf), obj);
-}
-
-void
-grn_mrb_push_int(grn_ctx *ctx, void *buf, int i)
-{
-  mrb_state *mrb = ctx->impl->mrb;
-  mrb_value obj;
-  obj = mrb_fixnum_value(i);
-  mrb_ary_push(mrb, mrb_obj_value(buf), obj);
-}
 #else
 void
 grn_ctx_impl_mrb_init(grn_ctx *ctx)

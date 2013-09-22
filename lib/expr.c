@@ -24,6 +24,12 @@
 #include "geo.h"
 #include "util.h"
 #include "normalizer_in.h"
+#include "mrb.h"
+#ifdef GRN_WITH_MRUBY
+# include <mruby/data.h>
+# include <mruby/class.h>
+# include <mruby/variable.h>
+#endif
 
 static inline int
 function_proc_p(grn_obj *obj)
@@ -3818,12 +3824,12 @@ typedef enum {
   GRN_FREE(si);\
 } while (0)
 
-#define SI_ALLOC(si, i, st) do {\
+#define SI_ALLOC_(si, i, st, ret) do {\
   if (!((si) = GRN_MALLOCN(scan_info, 1))) {\
     int j;\
     for (j = 0; j < i; j++) { SI_FREE(sis[j]); }\
     GRN_FREE(sis);\
-    return NULL;\
+    return ret;\
   }\
   GRN_INT32_INIT(&(si)->wv, GRN_OBJ_VECTOR);\
   GRN_PTR_INIT(&(si)->index, GRN_OBJ_VECTOR, GRN_ID_NIL);\
@@ -3832,6 +3838,7 @@ typedef enum {
   (si)->nargs = 0;\
   (si)->start = (st);\
 } while (0)
+#define SI_ALLOC(si, i, st) SI_ALLOC_(si, i, st, NULL)
 
 static scan_info **
 put_logical_op(grn_ctx *ctx, scan_info **sis, int *ip, grn_operator op, int start)
@@ -4030,15 +4037,26 @@ scan_info_init(grn_ctx *ctx, grn_obj *expr, grn_obj *var)
 }
 
 #ifdef GRN_WITH_MRUBY
-void *
-scan_info_build_with_mrb(grn_ctx *ctx, scan_info **sis, grn_obj *expr,
-                         grn_obj *var, int *n, grn_operator op, uint32_t size)
+static mrb_value
+mrb_grn_scan_info_build(mrb_state *mrb, mrb_value self)
 {
+  grn_ctx *ctx = (grn_ctx *)mrb->ud;
   scan_stat stat;
   int i;
   scan_info *si = NULL;
   grn_expr_code *c, *ce;
-  grn_expr *e = (grn_expr *)expr;
+  grn_expr *e;
+  grn_operator op;
+  uint32_t size;
+  scan_info **sis;
+  grn_obj *var;
+  int *n;
+  mrb_value mrb_expr, mrb_var, mrb_n;
+  sis = DATA_PTR(self);
+  mrb_get_args(mrb, "oooii", &mrb_expr, &mrb_var, &mrb_n, &op, &size);
+  e = (grn_expr *)DATA_PTR(mrb_expr);
+  var = (grn_obj *)DATA_PTR(mrb_var);
+  n = (int *)mrb_voidp(mrb_n);
   for (i = 0, stat = SCAN_START, c = e->codes, ce = &e->codes[e->codes_curr]; c < ce; c++) {
     switch (c->op) {
     case GRN_OP_MATCH :
@@ -4129,11 +4147,11 @@ scan_info_build_with_mrb(grn_ctx *ctx, scan_info **sis, grn_obj *expr,
     case GRN_OP_OR :
     case GRN_OP_AND_NOT :
     case GRN_OP_ADJUST :
-      if (!put_logical_op(ctx, sis, &i, c->op, c - e->codes)) { return NULL; }
+      if (!put_logical_op(ctx, sis, &i, c->op, c - e->codes)) { return mrb_nil_value(); }
       stat = SCAN_START;
       break;
     case GRN_OP_PUSH :
-      if (!si) { SI_ALLOC(si, i, c - e->codes); }
+      if (!si) { SI_ALLOC_(si, i, c - e->codes, mrb_nil_value()); }
       if (c->value == var) {
         stat = SCAN_VAR;
       } else {
@@ -4147,7 +4165,7 @@ scan_info_build_with_mrb(grn_ctx *ctx, scan_info **sis, grn_obj *expr,
     case GRN_OP_GET_VALUE :
       switch (stat) {
       case SCAN_START :
-        if (!si) { SI_ALLOC(si, i, c - e->codes); }
+        if (!si) { SI_ALLOC_(si, i, c - e->codes, mrb_nil_value()); }
         // fallthru
       case SCAN_CONST :
       case SCAN_VAR :
@@ -4172,7 +4190,7 @@ scan_info_build_with_mrb(grn_ctx *ctx, scan_info **sis, grn_obj *expr,
           GRN_OBJ_FIN(ctx, &inspected);
           for (j = 0; j < i; j++) { SI_FREE(sis[j]); }
           GRN_FREE(sis);
-          return NULL;
+          return mrb_nil_value();
         }
         stat = SCAN_COL2;
         break;
@@ -4183,7 +4201,7 @@ scan_info_build_with_mrb(grn_ctx *ctx, scan_info **sis, grn_obj *expr,
       }
       break;
     case GRN_OP_CALL :
-      if (!si) { SI_ALLOC(si, i, c - e->codes); }
+      if (!si) { SI_ALLOC_(si, i, c - e->codes, mrb_nil_value()); }
       if ((c->flags & GRN_EXPR_CODE_RELATIONAL_EXPRESSION) || c + 1 == ce) {
         stat = SCAN_START;
         si->op = c->op;
@@ -4224,16 +4242,37 @@ scan_info_build_with_mrb(grn_ctx *ctx, scan_info **sis, grn_obj *expr,
       ERR(GRN_INVALID_ARGUMENT, "invalid expr");
       for (j = 0; j < i; j++) { SI_FREE(sis[j]); }
       GRN_FREE(sis);
-      return NULL;
+      return mrb_nil_value();
     } else {
       sis[0]->flags &= ~SCAN_PUSH;
       sis[0]->logical_op = op;
     }
   } else {
-    if (!put_logical_op(ctx, sis, &i, op, c - e->codes)) { return NULL; }
+    if (!put_logical_op(ctx, sis, &i, op, c - e->codes)) { return mrb_nil_value(); }
   }
   *n = i;
-  return sis;
+  return self;
+}
+
+static struct mrb_data_type mrb_scaninfov_type = { "ScaninfoVector", NULL };
+static struct mrb_data_type mrb_expr_type = { "Expr", NULL };
+static struct mrb_data_type mrb_obj_type = { "Obj", NULL };
+
+void
+grn_mrb_init_expr(grn_ctx *ctx)
+{
+  mrb_state *mrb = ctx->impl->mrb;
+  struct RClass *klass;
+  klass = mrb_define_class(mrb, "ScaninfoVector", mrb->object_class);
+  MRB_SET_INSTANCE_TT(klass, MRB_TT_DATA);
+  mrb_iv_set(mrb, mrb_obj_value(klass), mrb_intern(mrb, "type"), mrb_voidp_value(&mrb_scaninfov_type));
+  mrb_define_method(mrb, klass, "build", mrb_grn_scan_info_build, ARGS_REQ(5));
+  klass = mrb_define_class(mrb, "Expr", mrb->object_class);
+  MRB_SET_INSTANCE_TT(klass, MRB_TT_DATA);
+  mrb_iv_set(mrb, mrb_obj_value(klass), mrb_intern(mrb, "type"), mrb_voidp_value(&mrb_expr_type));
+  klass = mrb_define_class(mrb, "Obj", mrb->object_class);
+  MRB_SET_INSTANCE_TT(klass, MRB_TT_DATA);
+  mrb_iv_set(mrb, mrb_obj_value(klass), mrb_intern(mrb, "type"), mrb_voidp_value(&mrb_obj_type));
 }
 #endif
 
@@ -4251,14 +4290,17 @@ scan_info_build(grn_ctx *ctx, grn_obj *expr, int *n,
   if (!(sis = scan_info_init(ctx, expr, var))) { return NULL; }
 #ifdef GRN_WITH_MRUBY
   if (ctx->impl->mrb) {
-    void *buf = grn_mrb_get_argbuf(ctx);
-    grn_mrb_push_ptr(ctx, buf, sis, "ScaninfoVector");
-    grn_mrb_push_ptr(ctx, buf, e, "Expr");
-    grn_mrb_push_ptr(ctx, buf, var, "Obj");
-    grn_mrb_push_ptr(ctx, buf, n, NULL);
-    grn_mrb_push_int(ctx, buf, op);
-    grn_mrb_push_int(ctx, buf, (int32_t)size);
-    return grn_mrb_send(ctx, buf, "build") ? sis : NULL;
+    mrb_state *mrb = ctx->impl->mrb;
+    mrb_value msis, mexpr, mvar, mn;
+    int ret, ai = mrb_gc_arena_save(mrb);
+    msis = grn_mrb_obj_new(mrb, sis, "ScaninfoVector");
+    mexpr = grn_mrb_obj_new(mrb, e, "Expr");
+    mvar = grn_mrb_obj_new(mrb, var, "Obj");
+    mn = mrb_voidp_value(n);
+    ret = mrb_test(mrb_funcall(mrb, msis, "build", 5, mexpr, mvar, mn,
+                               mrb_fixnum_value(op), mrb_fixnum_value(size)));
+    mrb_gc_arena_restore(mrb, ai);
+    return ret ? sis : NULL;
   }
 #endif
   for (i = 0, stat = SCAN_START, c = e->codes, ce = &e->codes[e->codes_curr]; c < ce; c++) {
