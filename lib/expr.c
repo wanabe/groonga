@@ -3940,22 +3940,6 @@ scan_info_put_index(grn_ctx *ctx, scan_info *si, grn_obj *index, uint32_t sid, i
   }
 }
 
-static mrb_value
-mrb_grn_scan_info_put_index(mrb_state *mrb, mrb_value self)
-{
-  grn_ctx *ctx = (grn_ctx *)mrb->ud;
-  scan_info *si;
-  mrb_value mrb_index;
-  grn_obj *index;
-  int sid;
-  int32_t weight;
-  mrb_get_args(mrb, "oii", &mrb_index, &sid, &weight);
-  si = DATA_PTR(self);
-  index = DATA_PTR(mrb_index);
-  scan_info_put_index(ctx, si, index, sid, weight);
-  return self;
-}
-
 static int32_t
 get_weight(grn_ctx *ctx, grn_expr_code *ec)
 {
@@ -4055,6 +4039,93 @@ scan_info_init(grn_ctx *ctx, grn_obj *expr, grn_obj *var)
 
 #ifdef GRN_WITH_MRUBY
 static mrb_value
+mrb_grn_scan_info_put_index(mrb_state *mrb, mrb_value self)
+{
+  grn_ctx *ctx = (grn_ctx *)mrb->ud;
+  scan_info *si;
+  mrb_value mrb_index;
+  grn_obj *index;
+  int sid;
+  int32_t weight;
+  mrb_get_args(mrb, "oii", &mrb_index, &sid, &weight);
+  si = DATA_PTR(self);
+  index = DATA_PTR(mrb_index);
+  scan_info_put_index(ctx, si, index, sid, weight);
+  return self;
+}
+
+static mrb_value
+mrb_grn_scan_info_put_logical_op(mrb_state *mrb, mrb_value self)
+{
+  grn_ctx *ctx = (grn_ctx *)mrb->ud;
+  scan_info **sis;
+  grn_operator op;
+  mrb_value ret = mrb_true_value();
+  int start, nparens = 1, ndifops = 0, i, j, r = 0;
+  sis = DATA_PTR(self);
+  mrb_get_args(mrb, "iii", &i, &op, &start);
+  j = i;
+  while (j--) {
+    scan_info *s_ = sis[j];
+    if (s_->flags & SCAN_POP) {
+      ndifops++;
+      nparens++;
+    } else {
+      if (s_->flags & SCAN_PUSH) {
+        if (!(--nparens)) {
+          if (!r) {
+            if (ndifops) {
+              if (j && op != GRN_OP_AND_NOT) {
+                nparens = 1;
+                ndifops = 0;
+                r = j;
+              } else {
+                SI_ALLOC_(s_, i, start, mrb_nil_value());
+                s_->flags = SCAN_POP;
+                s_->logical_op = op;
+                sis[i++] = s_;
+                ret = mrb_fixnum_value(i);
+                break;
+              }
+            } else {
+              s_->flags &= ~SCAN_PUSH;
+              s_->logical_op = op;
+              break;
+            }
+          } else {
+            if (ndifops) {
+              SI_ALLOC_(s_, i, start, mrb_nil_value());
+              s_->flags = SCAN_POP;
+              s_->logical_op = op;
+              sis[i++] = s_;
+              ret = mrb_fixnum_value(i);
+            } else {
+              s_->flags &= ~SCAN_PUSH;
+              s_->logical_op = op;
+              memcpy(&sis[i], &sis[j], sizeof(scan_info *) * (r - j));
+              memmove(&sis[j], &sis[r], sizeof(scan_info *) * (i - r));
+              memcpy(&sis[i + j - r], &sis[i], sizeof(scan_info *) * (r - j));
+            }
+            break;
+          }
+        }
+      } else {
+        if ((op == GRN_OP_AND_NOT) || (op != s_->logical_op)) {
+          ndifops++;
+        }
+      }
+    }
+  }
+  if (j < 0) {
+    ERR(GRN_INVALID_ARGUMENT, "unmatched nesting level");
+    for (j = 0; j < i; j++) { SI_FREE(sis[j]); }
+    GRN_FREE(sis);
+    return mrb_nil_value();
+  }
+  return ret;
+}
+
+static mrb_value
 mrb_grn_scan_info_get(mrb_state *mrb, mrb_value self)
 {
   grn_ctx *ctx = (grn_ctx *)mrb->ud;
@@ -4067,13 +4138,11 @@ mrb_grn_scan_info_get(mrb_state *mrb, mrb_value self)
   uint32_t size;
   scan_info **sis;
   grn_obj *var;
-  int *n;
-  mrb_value mrb_expr, mrb_var, mrb_n, ary;
+  mrb_value mrb_expr, mrb_var, ary;
   sis = DATA_PTR(self);
-  mrb_get_args(mrb, "oooii", &mrb_expr, &mrb_var, &mrb_n, &op, &size);
+  mrb_get_args(mrb, "ooii", &mrb_expr, &mrb_var, &op, &size);
   e = (grn_expr *)DATA_PTR(mrb_expr);
   var = (grn_obj *)DATA_PTR(mrb_var);
-  n = (int *)mrb_voidp(mrb_n);
   for (i = 0, stat = SCAN_START, c = e->codes, ce = &e->codes[e->codes_curr]; c < ce; c++) {
     switch (c->op) {
     case GRN_OP_MATCH :
@@ -4260,7 +4329,7 @@ mrb_grn_scan_info_get(mrb_state *mrb, mrb_value self)
   mrb_ary_push(mrb, ary, self);
   mrb_ary_push(mrb, ary, mrb_fixnum_value(i));
   mrb_ary_push(mrb, ary, mrb_fixnum_value(op));
-  mrb_ary_push(mrb, ary, grn_mrb_obj_new(mrb, c, "ExprCode"));
+  mrb_ary_push(mrb, ary, mrb_fixnum_value(c - e->codes));
   return ary;
 }
 static mrb_value
@@ -4268,34 +4337,23 @@ mrb_grn_scan_info_check(mrb_state *mrb, mrb_value self)
 {
   grn_ctx *ctx = (grn_ctx *)mrb->ud;
   grn_operator op;
-  uint32_t size;
-  int i, *n;
+  int i;
   scan_info **sis;
-  mrb_value mrb_expr, mrb_n, mrb_c;
-  grn_expr *e;
-  grn_expr_code *c;
+  mrb_value mrb_expr;
   sis = DATA_PTR(self);
-  mrb_get_args(mrb, "oooiii", &mrb_expr, &mrb_c, &mrb_n, &op, &size, &i);
-  e = (grn_expr *)DATA_PTR(mrb_expr);
-  n = (int *)mrb_voidp(mrb_n);
-  c = (grn_expr_code *)DATA_PTR(mrb_c);
-  if (op == GRN_OP_OR && !size) {
-    // for debug
-    if (!(sis[0]->flags & SCAN_PUSH) || (sis[0]->logical_op != op)) {
-      int j;
-      ERR(GRN_INVALID_ARGUMENT, "invalid expr");
-      for (j = 0; j < i; j++) { SI_FREE(sis[j]); }
-      GRN_FREE(sis);
-      return mrb_nil_value();
-    } else {
-      sis[0]->flags &= ~SCAN_PUSH;
-      sis[0]->logical_op = op;
-    }
+  mrb_get_args(mrb, "ii", &op, &i);
+  // for debug
+  if (!(sis[0]->flags & SCAN_PUSH) || (sis[0]->logical_op != op)) {
+    int j;
+    ERR(GRN_INVALID_ARGUMENT, "invalid expr");
+    for (j = 0; j < i; j++) { SI_FREE(sis[j]); }
+    GRN_FREE(sis);
+    return mrb_nil_value();
   } else {
-    if (!put_logical_op(ctx, sis, &i, op, c - e->codes)) { return mrb_nil_value(); }
+    sis[0]->flags &= ~SCAN_PUSH;
+    sis[0]->logical_op = op;
   }
-  *n = i;
-  return self;
+  return mrb_fixnum_value(i);
 }
 
 static struct mrb_data_type mrb_scaninfov_type = { "ScaninfoVector", NULL };
@@ -4312,8 +4370,10 @@ grn_mrb_init_expr(grn_ctx *ctx)
   klass = mrb_define_class(mrb, "ScaninfoVector", mrb->object_class);
   MRB_SET_INSTANCE_TT(klass, MRB_TT_DATA);
   mrb_iv_set(mrb, mrb_obj_value(klass), mrb_intern(mrb, "type"), mrb_voidp_value(&mrb_scaninfov_type));
-  mrb_define_method(mrb, klass, "get", mrb_grn_scan_info_get, ARGS_REQ(5));
-  mrb_define_method(mrb, klass, "check", mrb_grn_scan_info_check, ARGS_REQ(5));
+  mrb_define_const(mrb, klass, "GRN_OP_OR", mrb_fixnum_value(GRN_OP_OR));
+  mrb_define_method(mrb, klass, "get", mrb_grn_scan_info_get, ARGS_REQ(4));
+  mrb_define_method(mrb, klass, "check", mrb_grn_scan_info_check, ARGS_REQ(2));
+  mrb_define_method(mrb, klass, "put_logical_op", mrb_grn_scan_info_put_logical_op, ARGS_REQ(3));
   klass = mrb_define_class(mrb, "Scaninfo", mrb->object_class);
   MRB_SET_INSTANCE_TT(klass, MRB_TT_DATA);
   mrb_iv_set(mrb, mrb_obj_value(klass), mrb_intern(mrb, "type"), mrb_voidp_value(&mrb_scaninfo_type));
@@ -4328,13 +4388,17 @@ grn_mrb_init_expr(grn_ctx *ctx)
   MRB_SET_INSTANCE_TT(klass, MRB_TT_DATA);
   mrb_iv_set(mrb, mrb_obj_value(klass), mrb_intern(mrb, "type"), mrb_voidp_value(&mrb_exprcode_type));
   grn_mrb_eval(ctx,
-               "class ScaninfoVector\n"
-               "  def build(expr, var, n, op, size)\n"
-               "    ret, i, op, c = *get(expr, var, n, op, size)\n"
-               "    return nil unless ret\n"
-               "    check expr, c, n, op, size, i\n"
-               "  end\n"
-               "end\n",
+               "class ScaninfoVector" "\n"
+               "  def build(expr, var, op, size)" "\n"
+               "    ret, i, op, start = *get(expr, var, op, size)" "\n"
+               "    return nil unless ret" "\n"
+               "    if op == GRN_OP_OR && size == 0" "\n"
+               "      return check op, i" "\n"
+               "    else" "\n"
+               "      return put_logical_op i, op, start" "\n"
+               "    end" "\n"
+               "  end" "\n"
+               "end" "\n",
                -1);
 }
 #endif
@@ -4354,16 +4418,20 @@ scan_info_build(grn_ctx *ctx, grn_obj *expr, int *n,
 #ifdef GRN_WITH_MRUBY
   if (ctx->impl->mrb) {
     mrb_state *mrb = ctx->impl->mrb;
-    mrb_value msis, mexpr, mvar, mn;
-    int ret, ai = mrb_gc_arena_save(mrb);
+    mrb_value msis, mexpr, mvar, mret;
+    int ai = mrb_gc_arena_save(mrb);
     msis = grn_mrb_obj_new(mrb, sis, "ScaninfoVector");
     mexpr = grn_mrb_obj_new(mrb, e, "Expr");
     mvar = grn_mrb_obj_new(mrb, var, "Obj");
-    mn = mrb_voidp_value(n);
-    ret = mrb_test(mrb_funcall(mrb, msis, "build", 5, mexpr, mvar, mn,
-                               mrb_fixnum_value(op), mrb_fixnum_value(size)));
+    mret = mrb_funcall(mrb, msis, "build", 4, mexpr, mvar,
+                       mrb_fixnum_value(op), mrb_fixnum_value(size));
+    if (mrb_test(mret)) {
+      *n = mrb_fixnum(mret);
+    } else {
+      sis = NULL;
+    }
     mrb_gc_arena_restore(mrb, ai);
-    return ret ? sis : NULL;
+    return sis;
   }
 #endif
   for (i = 0, stat = SCAN_START, c = e->codes, ce = &e->codes[e->codes_curr]; c < ce; c++) {
