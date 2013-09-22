@@ -3955,17 +3955,13 @@ get_weight(grn_ctx *ctx, grn_expr_code *ec)
   }
 }
 
-static scan_info **
-scan_info_build(grn_ctx *ctx, grn_obj *expr, int *n,
-                grn_operator op, uint32_t size)
+static inline scan_info **
+scan_info_init(grn_ctx *ctx, grn_obj *expr, grn_obj *var)
 {
-  grn_obj *var;
   scan_stat stat;
-  int i, m = 0, o = 0;
-  scan_info **sis, *si = NULL;
+  int m = 0, o = 0;
   grn_expr_code *c, *ce;
   grn_expr *e = (grn_expr *)expr;
-  if (!(var = grn_expr_get_var_by_offset(ctx, expr, 0))) { return NULL; }
   for (stat = SCAN_START, c = e->codes, ce = &e->codes[e->codes_curr]; c < ce; c++) {
     switch (c->op) {
     case GRN_OP_MATCH :
@@ -4030,7 +4026,241 @@ scan_info_build(grn_ctx *ctx, grn_obj *expr, int *n,
     }
   }
   if (stat || m != o + 1) { return NULL; }
-  if (!(sis = GRN_MALLOCN(scan_info *, m + m + o))) { return NULL; }
+  return GRN_MALLOCN(scan_info *, m + m + o);
+}
+
+#ifdef GRN_WITH_MRUBY
+void *
+scan_info_build_with_mrb(grn_ctx *ctx, scan_info **sis, grn_obj *expr,
+                         grn_obj *var, int *n, grn_operator op, uint32_t size)
+{
+  scan_stat stat;
+  int i;
+  scan_info *si = NULL;
+  grn_expr_code *c, *ce;
+  grn_expr *e = (grn_expr *)expr;
+  for (i = 0, stat = SCAN_START, c = e->codes, ce = &e->codes[e->codes_curr]; c < ce; c++) {
+    switch (c->op) {
+    case GRN_OP_MATCH :
+    case GRN_OP_NEAR :
+    case GRN_OP_NEAR2 :
+    case GRN_OP_SIMILAR :
+    case GRN_OP_PREFIX :
+    case GRN_OP_SUFFIX :
+    case GRN_OP_EQUAL :
+    case GRN_OP_NOT_EQUAL :
+    case GRN_OP_LESS :
+    case GRN_OP_GREATER :
+    case GRN_OP_LESS_EQUAL :
+    case GRN_OP_GREATER_EQUAL :
+    case GRN_OP_GEO_WITHINP5 :
+    case GRN_OP_GEO_WITHINP6 :
+    case GRN_OP_GEO_WITHINP8 :
+    case GRN_OP_TERM_EXTRACT :
+      stat = SCAN_START;
+      si->op = c->op;
+      si->end = c - e->codes;
+      sis[i++] = si;
+      {
+        int sid;
+        grn_obj *index, **p = si->args, **pe = si->args + si->nargs;
+        for (; p < pe; p++) {
+          if ((*p)->header.type == GRN_EXPR) {
+            uint32_t j;
+            grn_expr_code *ec;
+            grn_expr *e = (grn_expr *)(*p);
+            for (j = e->codes_curr, ec = e->codes; j--; ec++) {
+              if (ec->value) {
+                switch (ec->value->header.type) {
+                case GRN_ACCESSOR :
+                  if (grn_column_index(ctx, ec->value, c->op, &index, 1, &sid)) {
+                    int32_t weight = get_weight(ctx, ec);
+                    si->flags |= SCAN_ACCESSOR;
+                    if (((grn_accessor *)ec->value)->next) {
+                      scan_info_put_index(ctx, si, ec->value, sid, weight);
+                    } else {
+                      scan_info_put_index(ctx, si, index, sid, weight);
+                    }
+                  }
+                  break;
+                case GRN_COLUMN_FIX_SIZE :
+                case GRN_COLUMN_VAR_SIZE :
+                  if (grn_column_index(ctx, ec->value, c->op, &index, 1, &sid)) {
+                    scan_info_put_index(ctx, si, index, sid, get_weight(ctx, ec));
+                  }
+                  break;
+                case GRN_COLUMN_INDEX :
+                  sid = 0;
+                  index = ec->value;
+                  if (j > 2 &&
+                      ec[1].value &&
+                      ec[1].value->header.domain == GRN_DB_UINT32 &&
+                      ec[2].op == GRN_OP_GET_MEMBER) {
+                    sid = GRN_UINT32_VALUE(ec[1].value) + 1;
+                    j -= 2;
+                    ec += 2;
+                  }
+                  scan_info_put_index(ctx, si, index, sid, get_weight(ctx, ec));
+                  break;
+                }
+              }
+            }
+          } else if (GRN_DB_OBJP(*p)) {
+            if (grn_column_index(ctx, *p, c->op, &index, 1, &sid)) {
+              scan_info_put_index(ctx, si, index, sid, 1);
+            }
+          } else if (GRN_ACCESSORP(*p)) {
+            si->flags |= SCAN_ACCESSOR;
+            if (grn_column_index(ctx, *p, c->op, &index, 1, &sid)) {
+              if (((grn_accessor *)(*p))->next) {
+                scan_info_put_index(ctx, si, *p, sid, 1);
+              } else {
+                scan_info_put_index(ctx, si, index, sid, 1);
+              }
+            }
+          } else {
+            si->query = *p;
+          }
+        }
+      }
+      si = NULL;
+      break;
+    case GRN_OP_AND :
+    case GRN_OP_OR :
+    case GRN_OP_AND_NOT :
+    case GRN_OP_ADJUST :
+      if (!put_logical_op(ctx, sis, &i, c->op, c - e->codes)) { return NULL; }
+      stat = SCAN_START;
+      break;
+    case GRN_OP_PUSH :
+      if (!si) { SI_ALLOC(si, i, c - e->codes); }
+      if (c->value == var) {
+        stat = SCAN_VAR;
+      } else {
+        if (si->nargs < 8) {
+          si->args[si->nargs++] = c->value;
+        }
+        if (stat == SCAN_START) { si->flags |= SCAN_PRE_CONST; }
+        stat = SCAN_CONST;
+      }
+      break;
+    case GRN_OP_GET_VALUE :
+      switch (stat) {
+      case SCAN_START :
+        if (!si) { SI_ALLOC(si, i, c - e->codes); }
+        // fallthru
+      case SCAN_CONST :
+      case SCAN_VAR :
+        stat = SCAN_COL1;
+        if (si->nargs < 8) {
+          si->args[si->nargs++] = c->value;
+        }
+        break;
+      case SCAN_COL1 :
+        {
+          int j;
+          grn_obj inspected;
+          GRN_TEXT_INIT(&inspected, 0);
+          GRN_TEXT_PUTS(ctx, &inspected, "<");
+          grn_inspect_name(ctx, &inspected, c->value);
+          GRN_TEXT_PUTS(ctx, &inspected, ">: <");
+          grn_inspect(ctx, &inspected, (grn_obj *)e);
+          GRN_TEXT_PUTS(ctx, &inspected, ">");
+          ERR(GRN_INVALID_ARGUMENT,
+              "invalid expression: can't use column as a value: %.*s",
+              (int)GRN_TEXT_LEN(&inspected), GRN_TEXT_VALUE(&inspected));
+          GRN_OBJ_FIN(ctx, &inspected);
+          for (j = 0; j < i; j++) { SI_FREE(sis[j]); }
+          GRN_FREE(sis);
+          return NULL;
+        }
+        stat = SCAN_COL2;
+        break;
+      case SCAN_COL2 :
+        break;
+      default :
+        break;
+      }
+      break;
+    case GRN_OP_CALL :
+      if (!si) { SI_ALLOC(si, i, c - e->codes); }
+      if ((c->flags & GRN_EXPR_CODE_RELATIONAL_EXPRESSION) || c + 1 == ce) {
+        stat = SCAN_START;
+        si->op = c->op;
+        si->end = c - e->codes;
+        sis[i++] = si;
+        /* better index resolving framework for functions should be implemented */
+        {
+          int sid;
+          grn_obj *index, **p = si->args, **pe = si->args + si->nargs;
+          for (; p < pe; p++) {
+            if (GRN_DB_OBJP(*p)) {
+              if (grn_column_index(ctx, *p, c->op, &index, 1, &sid)) {
+                scan_info_put_index(ctx, si, index, sid, 1);
+              }
+            } else if (GRN_ACCESSORP(*p)) {
+              si->flags |= SCAN_ACCESSOR;
+              if (grn_column_index(ctx, *p, c->op, &index, 1, &sid)) {
+                scan_info_put_index(ctx, si, index, sid, 1);
+              }
+            } else {
+              si->query = *p;
+            }
+          }
+        }
+        si = NULL;
+      } else {
+        stat = SCAN_COL2;
+      }
+      break;
+    default :
+      break;
+    }
+  }
+  if (op == GRN_OP_OR && !size) {
+    // for debug
+    if (!(sis[0]->flags & SCAN_PUSH) || (sis[0]->logical_op != op)) {
+      int j;
+      ERR(GRN_INVALID_ARGUMENT, "invalid expr");
+      for (j = 0; j < i; j++) { SI_FREE(sis[j]); }
+      GRN_FREE(sis);
+      return NULL;
+    } else {
+      sis[0]->flags &= ~SCAN_PUSH;
+      sis[0]->logical_op = op;
+    }
+  } else {
+    if (!put_logical_op(ctx, sis, &i, op, c - e->codes)) { return NULL; }
+  }
+  *n = i;
+  return sis;
+}
+#endif
+
+static scan_info **
+scan_info_build(grn_ctx *ctx, grn_obj *expr, int *n,
+                grn_operator op, uint32_t size)
+{
+  grn_obj *var;
+  scan_stat stat;
+  int i;
+  scan_info **sis, *si = NULL;
+  grn_expr_code *c, *ce;
+  grn_expr *e = (grn_expr *)expr;
+  if (!(var = grn_expr_get_var_by_offset(ctx, expr, 0))) { return NULL; }
+  if (!(sis = scan_info_init(ctx, expr, var))) { return NULL; }
+#ifdef GRN_WITH_MRUBY
+  if (ctx->impl->mrb) {
+    void *buf = grn_mrb_get_argbuf(ctx);
+    grn_mrb_push_ptr(ctx, buf, sis, "ScaninfoVector");
+    grn_mrb_push_ptr(ctx, buf, e, "Expr");
+    grn_mrb_push_ptr(ctx, buf, var, "Obj");
+    grn_mrb_push_ptr(ctx, buf, n, NULL);
+    grn_mrb_push_int(ctx, buf, op);
+    grn_mrb_push_int(ctx, buf, (int32_t)size);
+    return grn_mrb_send(ctx, buf, "build") ? sis : NULL;
+  }
+#endif
   for (i = 0, stat = SCAN_START, c = e->codes, ce = &e->codes[e->codes_curr]; c < ce; c++) {
     switch (c->op) {
     case GRN_OP_MATCH :
