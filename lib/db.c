@@ -352,7 +352,11 @@ grn_db_close(grn_ctx *ctx, grn_obj *db)
   if (s->specs) { grn_ja_close(ctx, s->specs); }
   GRN_FREE(s);
   if (ctx_used_db) {
-    grn_cache_expire(-1);
+    grn_cache *cache;
+    cache = grn_cache_current_get(ctx);
+    if (cache) {
+      grn_cache_expire(cache, -1);
+    }
     ctx->impl->db = NULL;
   }
   GRN_API_RETURN(GRN_SUCCESS);
@@ -1535,7 +1539,7 @@ delete_reference_records_in_index(grn_ctx *ctx, grn_obj *table, grn_id id,
                                   grn_obj *index)
 {
   grn_ii *ii = (grn_ii *)index;
-  grn_ii_cursor *ii_cursor;
+  grn_ii_cursor *ii_cursor = NULL;
   grn_ii_posting *posting;
   grn_obj source_ids;
   unsigned int i, n_ids;
