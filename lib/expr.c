@@ -4292,13 +4292,6 @@ mrb_grn_expr_scan_call(mrb_state *mrb, mrb_value self)
   var = (grn_obj *)DATA_PTR(mrb_var);
   c = (grn_expr_code *)DATA_PTR(mrb_c);
   if (mrb_test(mrb_si)) { si = (scan_info *)DATA_PTR(mrb_si); }
-      if (!si) { SI_ALLOC_(si, i, c - e->codes, mrb_nil_value()); }
-      if ((c->flags & GRN_EXPR_CODE_RELATIONAL_EXPRESSION) ||
-          c + 1 == &e->codes[e->codes_curr]) {
-        stat = SCAN_START;
-        si->op = c->op;
-        si->end = c - e->codes;
-        sis[i++] = si;
         /* better index resolving framework for functions should be implemented */
         {
           int sid;
@@ -4318,10 +4311,6 @@ mrb_grn_expr_scan_call(mrb_state *mrb, mrb_value self)
             }
           }
         }
-        si = NULL;
-      } else {
-        stat = SCAN_COL2;
-      }
   ary = mrb_ary_new_capa(mrb, 3);
   mrb_ary_push(mrb, ary, mrb_fixnum_value(i));
   mrb_ary_push(mrb, ary, mrb_fixnum_value(stat));
@@ -4344,6 +4333,18 @@ mrb_grn_scan_info_aref(mrb_state *mrb, mrb_value self)
   sis = DATA_PTR(self);
   mrb_get_args(mrb, "i", &i);
   return grn_mrb_obj_new(mrb, sis[i], "Scaninfo");
+}
+
+static mrb_value
+mrb_grn_scan_info_aset(mrb_state *mrb, mrb_value self)
+{
+  int i;
+  scan_info **sis;
+  mrb_value si;
+  sis = DATA_PTR(self);
+  mrb_get_args(mrb, "io", &i, &si);
+  sis[i] = DATA_PTR(si);
+  return self;
 }
 
 static mrb_value
@@ -4409,6 +4410,28 @@ mrb_grn_scan_info_logical_op_set(mrb_state *mrb, mrb_value self)
 }
 
 static mrb_value
+mrb_grn_scan_info_op_set(mrb_state *mrb, mrb_value self)
+{
+  scan_info *si;
+  int op;
+  si = DATA_PTR(self);
+  mrb_get_args(mrb, "i", &op);
+  si->op = op;
+  return self;
+}
+
+static mrb_value
+mrb_grn_scan_info_fin_set(mrb_state *mrb, mrb_value self)
+{
+  scan_info *si;
+  int fin;
+  si = DATA_PTR(self);
+  mrb_get_args(mrb, "i", &fin);
+  si->end = fin;
+  return self;
+}
+
+static mrb_value
 mrb_grn_scan_info_push_arg(mrb_state *mrb, mrb_value self)
 {
   scan_info *si;
@@ -4418,7 +4441,6 @@ mrb_grn_scan_info_push_arg(mrb_state *mrb, mrb_value self)
   if (si->nargs < 8) {
     si->args[si->nargs++] = DATA_PTR(obj);
   }
-
   return self;
 }
 
@@ -4474,6 +4496,18 @@ mrb_grn_exprcode_value(mrb_state *mrb, mrb_value self)
   return grn_mrb_obj_new(mrb, c->value, "Obj");
 }
 
+static mrb_value
+mrb_grn_exprcode_flags(mrb_state *mrb, mrb_value self)
+{
+  unsigned int flags;
+  grn_expr_code *c;
+  c = DATA_PTR(self);
+  if (mrb_get_args(mrb, "|i", &flags) == 1) {
+    return c->flags & flags ? mrb_true_value() : mrb_false_value();
+  }
+  return mrb_fixnum_value(c->flags);
+}
+
 static struct mrb_data_type mrb_scaninfov_type = { "ScaninfoVector", NULL };
 static struct mrb_data_type mrb_scaninfo_type = { "Scaninfo", NULL };
 static struct mrb_data_type mrb_expr_type = { "Expr", NULL };
@@ -4497,6 +4531,7 @@ grn_mrb_init_expr(grn_ctx *ctx)
   mrb_iv_set(mrb, mrb_obj_value(klass), mrb_intern(mrb, "type"),
              mrb_voidp_value(&mrb_scaninfov_type));
   mrb_define_method(mrb, klass, "[]", mrb_grn_scan_info_aref, ARGS_REQ(1));
+  mrb_define_method(mrb, klass, "[]=", mrb_grn_scan_info_aset, ARGS_REQ(2));
   mrb_define_method(mrb, klass, "free", mrb_grn_scan_info_free, ARGS_REQ(1));
   klass = mrb_define_class(mrb, "Scaninfo", mrb->object_class);
   MRB_SET_INSTANCE_TT(klass, MRB_TT_DATA);
@@ -4511,6 +4546,8 @@ grn_mrb_init_expr(grn_ctx *ctx)
                     ARGS_NONE());
   mrb_define_method(mrb, klass, "logical_op=", mrb_grn_scan_info_logical_op_set,
                     ARGS_REQ(1));
+  mrb_define_method(mrb, klass, "op=", mrb_grn_scan_info_op_set, ARGS_REQ(1));
+  mrb_define_method(mrb, klass, "fin=", mrb_grn_scan_info_fin_set, ARGS_REQ(1));
   mrb_define_method(mrb, klass, "push_arg", mrb_grn_scan_info_push_arg,
                     ARGS_REQ(1));
   klass = mrb_define_class(mrb, "Obj", mrb->object_class);
@@ -4549,6 +4586,7 @@ grn_mrb_init_expr(grn_ctx *ctx)
   MRB_GRN_CONST(GRN_OP_GET_VALUE);
   MRB_GRN_CONST(GRN_OP_CALL);
   MRB_GRN_CONST(GRN_INVALID_ARGUMENT);
+  MRB_GRN_CONST(GRN_EXPR_CODE_RELATIONAL_EXPRESSION);
   MRB_GRN_CONST(SCAN_PUSH);
   MRB_GRN_CONST(SCAN_START);
   MRB_GRN_CONST(SCAN_VAR);
@@ -4575,6 +4613,7 @@ grn_mrb_init_expr(grn_ctx *ctx)
              mrb_voidp_value(&mrb_exprcode_type));
   mrb_define_method(mrb, klass, "op", mrb_grn_exprcode_op, ARGS_NONE());
   mrb_define_method(mrb, klass, "value", mrb_grn_exprcode_value, ARGS_NONE());
+  mrb_define_method(mrb, klass, "flags", mrb_grn_exprcode_flags, ARGS_OPT(1));
   grn_mrb_eval(ctx,
                "class Expr" "\n"
                "  def build(sis, var, op, size)" "\n"
@@ -4625,8 +4664,22 @@ grn_mrb_init_expr(grn_ctx *ctx)
                "        when SCAN_COL2" "\n"
                "        end" "\n"
                "      when GRN_OP_CALL" "\n"
-               "        i, stat, si = scan_call \\" "\n"
-               "          sis, var, c,si, i, stat" "\n"
+               "        si = alloc_si sis, i, index(c) unless si" "\n"
+               "        if !si" "\n"
+               "          i = nil" "\n"
+               "        elsif c.flags(GRN_EXPR_CODE_RELATIONAL_EXPRESSION) ||" "\n"
+               "              index(c) + 1 == codes_curr" "\n"
+               "          stat = SCAN_START" "\n"
+               "          si.op = c.op" "\n"
+               "          si.fin = index(c)" "\n"
+               "          sis[i] = si" "\n"
+               "          i += 1" "\n"
+               "          i, stat, si = scan_call \\" "\n"
+               "            sis, var, c,si, i, stat" "\n"
+               "          si = nil" "\n"
+               "        else" "\n"
+               "          stat = SCAN_COL2" "\n"
+               "        end" "\n"
                "      end" "\n"
                "      i" "\n"
                "    end" "\n"
