@@ -4128,32 +4128,23 @@ mrb_grn_expr_put_logical_op(mrb_state *mrb, mrb_value self)
 static mrb_value
 mrb_grn_expr_scan_normal(mrb_state *mrb, mrb_value self)
 {
-  int i;
-  scan_stat stat;
-  scan_info **sis, *si = NULL;
+  scan_info *si = NULL;
   grn_ctx *ctx = (grn_ctx *)mrb->ud;
-  grn_obj *var;
   grn_expr_code *c;
   grn_expr *e;
-  mrb_value mrb_sis, mrb_var, mrb_c, mrb_si, ary;
-  mrb_get_args(mrb, "ooooii", &mrb_sis, &mrb_var, &mrb_c, &mrb_si, &i, &stat);
-  sis = (scan_info **)DATA_PTR(mrb_sis);
+  mrb_value mrb_c, mrb_si, mrb_obj;
+  mrb_get_args(mrb, "ooo", &mrb_c, &mrb_si, &mrb_obj);
   e = (grn_expr *)DATA_PTR(self);
-  var = (grn_obj *)DATA_PTR(mrb_var);
   c = (grn_expr_code *)DATA_PTR(mrb_c);
-  if (mrb_test(mrb_si)) { si = (scan_info *)DATA_PTR(mrb_si); }
-      stat = SCAN_START;
-      si->op = c->op;
-      si->end = c - e->codes;
-      sis[i++] = si;
+  si = (scan_info *)DATA_PTR(mrb_si);
       {
         int sid;
-        grn_obj *index, **p = si->args, **pe = si->args + si->nargs;
-        for (; p < pe; p++) {
-          if ((*p)->header.type == GRN_EXPR) {
+        grn_obj *index, *obj = DATA_PTR(mrb_obj);
+          sid = 0;
+          if (obj->header.type == GRN_EXPR) {
             uint32_t j;
             grn_expr_code *ec;
-            grn_expr *e = (grn_expr *)(*p);
+            grn_expr *e = (grn_expr *)obj;
             for (j = e->codes_curr, ec = e->codes; j--; ec++) {
               if (ec->value) {
                 switch (ec->value->header.type) {
@@ -4194,37 +4185,24 @@ mrb_grn_expr_scan_normal(mrb_state *mrb, mrb_value self)
                 }
               }
             }
-          } else if (GRN_DB_OBJP(*p)) {
-            if (grn_column_index(ctx, *p, c->op, &index, 1, &sid)) {
+          } else if (GRN_DB_OBJP(obj)) {
+            if (grn_column_index(ctx, obj, c->op, &index, 1, &sid)) {
               scan_info_put_index(ctx, si, index, sid, 1);
             }
-          } else if (GRN_ACCESSORP(*p)) {
+          } else if (GRN_ACCESSORP(obj)) {
             si->flags |= SCAN_ACCESSOR;
-            if (grn_column_index(ctx, *p, c->op, &index, 1, &sid)) {
-              if (((grn_accessor *)(*p))->next) {
-                scan_info_put_index(ctx, si, *p, sid, 1);
+            if (grn_column_index(ctx, obj, c->op, &index, 1, &sid)) {
+              if (((grn_accessor *)obj)->next) {
+                scan_info_put_index(ctx, si, obj, sid, 1);
               } else {
                 scan_info_put_index(ctx, si, index, sid, 1);
               }
             }
           } else {
-            si->query = *p;
+            si->query = obj;
           }
-        }
       }
-      si = NULL;
-  ary = mrb_ary_new_capa(mrb, 3);
-  mrb_ary_push(mrb, ary, mrb_fixnum_value(i));
-  mrb_ary_push(mrb, ary, mrb_fixnum_value(stat));
-  if (si) {
-    if (!mrb_test(mrb_si) || DATA_PTR(mrb_si) != si) {
-      mrb_si = grn_mrb_obj_new(mrb, si, "Scaninfo");
-    }
-    mrb_ary_push(mrb, ary, mrb_si);
-  } else {
-    mrb_ary_push(mrb, ary, mrb_nil_value());
-  }
-  return ary;
+  return self;
 }
 
 static mrb_value
@@ -4646,8 +4624,15 @@ grn_mrb_init_expr(grn_ctx *ctx)
                "           GRN_OP_GREATER_EQUAL, GRN_OP_GEO_WITHINP5," "\n"
                "           GRN_OP_GEO_WITHINP6, GRN_OP_GEO_WITHINP8," "\n"
                "           GRN_OP_TERM_EXTRACT" "\n"
-               "        i, stat, si = scan_normal \\" "\n"
-               "          sis, var, c,si, i, stat" "\n"
+               "        stat = SCAN_START" "\n"
+               "        si.op = c.op" "\n"
+               "        si.fin = index c" "\n"
+               "        sis[i] = si" "\n"
+               "        i += 1" "\n"
+               "        si.each_arg do |arg|" "\n"
+               "          scan_normal c, si, arg" "\n"
+               "        end" "\n"
+               "        si = nil" "\n"
                "      when GRN_OP_AND, GRN_OP_OR, GRN_OP_AND_NOT," "\n"
                "           GRN_OP_ADJUST" "\n"
                "        i = put_logical_op sis, i, c.op, index(c)" "\n"
