@@ -4276,52 +4276,35 @@ mrb_grn_obj_inspect(mrb_state *mrb, mrb_value self)
 }
 
 static mrb_value
-mrb_grn_expr_scan_call(mrb_state *mrb, mrb_value self)
+mrb_grn_obj_db_p(mrb_state *mrb, mrb_value self)
 {
-  int i;
-  scan_stat stat;
-  scan_info **sis, *si = NULL;
+  grn_obj *obj;
+  obj = DATA_PTR(self);
+  return GRN_DB_OBJP(obj) ? mrb_true_value() : mrb_false_value();
+}
+
+static mrb_value
+mrb_grn_obj_accessor_p(mrb_state *mrb, mrb_value self)
+{
+  grn_obj *obj;
+  obj = DATA_PTR(self);
+  return GRN_ACCESSORP(obj) ? mrb_true_value() : mrb_false_value();
+}
+
+static mrb_value
+mrb_grn_obj_column_index(mrb_state *mrb, mrb_value self)
+{
+  int ret, sid, op;
   grn_ctx *ctx = (grn_ctx *)mrb->ud;
-  grn_obj *var;
-  grn_expr_code *c;
-  grn_expr *e;
-  mrb_value mrb_sis, mrb_var, mrb_c, mrb_si, ary;
-  mrb_get_args(mrb, "ooooii", &mrb_sis, &mrb_var, &mrb_c, &mrb_si, &i, &stat);
-  sis = (scan_info **)DATA_PTR(mrb_sis);
-  e = (grn_expr *)DATA_PTR(self);
-  var = (grn_obj *)DATA_PTR(mrb_var);
-  c = (grn_expr_code *)DATA_PTR(mrb_c);
-  if (mrb_test(mrb_si)) { si = (scan_info *)DATA_PTR(mrb_si); }
-        /* better index resolving framework for functions should be implemented */
-        {
-          int sid;
-          grn_obj *index, **p = si->args, **pe = si->args + si->nargs;
-          for (; p < pe; p++) {
-            if (GRN_DB_OBJP(*p)) {
-              if (grn_column_index(ctx, *p, c->op, &index, 1, &sid)) {
-                scan_info_put_index(ctx, si, index, sid, 1);
-              }
-            } else if (GRN_ACCESSORP(*p)) {
-              si->flags |= SCAN_ACCESSOR;
-              if (grn_column_index(ctx, *p, c->op, &index, 1, &sid)) {
-                scan_info_put_index(ctx, si, index, sid, 1);
-              }
-            } else {
-              si->query = *p;
-            }
-          }
-        }
-  ary = mrb_ary_new_capa(mrb, 3);
-  mrb_ary_push(mrb, ary, mrb_fixnum_value(i));
-  mrb_ary_push(mrb, ary, mrb_fixnum_value(stat));
-  if (si) {
-    if (!mrb_test(mrb_si) || DATA_PTR(mrb_si) != si) {
-      mrb_si = grn_mrb_obj_new(mrb, si, "Scaninfo");
-    }
-    mrb_ary_push(mrb, ary, mrb_si);
-  } else {
-    mrb_ary_push(mrb, ary, mrb_nil_value());
-  }
+  grn_obj *obj, *index;
+  mrb_value ary;
+  obj = DATA_PTR(self);
+  mrb_get_args(mrb, "i", &op);
+  ret = grn_column_index(ctx, obj, op, &index, 1, &sid);
+  if (!ret) { return mrb_nil_value(); }
+  ary = mrb_ary_new_capa(mrb, 2);
+  mrb_ary_push(mrb, ary, grn_mrb_obj_new(mrb, index, "Obj"));
+  mrb_ary_push(mrb, ary, mrb_fixnum_value(sid));
   return ary;
 }
 
@@ -4432,6 +4415,17 @@ mrb_grn_scan_info_fin_set(mrb_state *mrb, mrb_value self)
 }
 
 static mrb_value
+mrb_grn_scan_info_query_set(mrb_state *mrb, mrb_value self)
+{
+  scan_info *si;
+  mrb_value query;
+  si = DATA_PTR(self);
+  mrb_get_args(mrb, "o", &query);
+  si->query = DATA_PTR(query);
+  return self;
+}
+
+static mrb_value
 mrb_grn_scan_info_push_arg(mrb_state *mrb, mrb_value self)
 {
   scan_info *si;
@@ -4440,6 +4434,22 @@ mrb_grn_scan_info_push_arg(mrb_state *mrb, mrb_value self)
   mrb_get_args(mrb, "o", &obj);
   if (si->nargs < 8) {
     si->args[si->nargs++] = DATA_PTR(obj);
+  }
+  return self;
+}
+
+static mrb_value
+mrb_grn_scan_info_each_arg(mrb_state *mrb, mrb_value self)
+{
+  scan_info *si;
+  grn_obj **p, **pe;
+  mrb_value b;
+  si = DATA_PTR(self);
+  mrb_get_args(mrb, "&", &b);
+  p = si->args;
+  pe = si->args + si->nargs;
+  for (; p < pe; p++) {
+    mrb_yield(mrb, b, grn_mrb_obj_new(mrb, *p, "Obj"));
   }
   return self;
 }
@@ -4548,8 +4558,11 @@ grn_mrb_init_expr(grn_ctx *ctx)
                     ARGS_REQ(1));
   mrb_define_method(mrb, klass, "op=", mrb_grn_scan_info_op_set, ARGS_REQ(1));
   mrb_define_method(mrb, klass, "fin=", mrb_grn_scan_info_fin_set, ARGS_REQ(1));
+  mrb_define_method(mrb, klass, "query=", mrb_grn_scan_info_query_set, ARGS_REQ(1));
   mrb_define_method(mrb, klass, "push_arg", mrb_grn_scan_info_push_arg,
                     ARGS_REQ(1));
+  mrb_define_method(mrb, klass, "each_arg", mrb_grn_scan_info_each_arg,
+                    ARGS_BLOCK());
   klass = mrb_define_class(mrb, "Obj", mrb->object_class);
   MRB_SET_INSTANCE_TT(klass, MRB_TT_DATA);
   mrb_iv_set(mrb, mrb_obj_value(klass), mrb_intern(mrb, "type"),
@@ -4557,6 +4570,11 @@ grn_mrb_init_expr(grn_ctx *ctx)
   mrb_define_method(mrb, klass, "==", mrb_grn_obj_equal, ARGS_REQ(1));
   mrb_define_method(mrb, klass, "name", mrb_grn_obj_name, ARGS_NONE());
   mrb_define_method(mrb, klass, "inspect", mrb_grn_obj_inspect, ARGS_NONE());
+  mrb_define_method(mrb, klass, "db?", mrb_grn_obj_db_p, ARGS_NONE());
+  mrb_define_method(mrb, klass, "accessor?", mrb_grn_obj_accessor_p,
+                    ARGS_NONE());
+  mrb_define_method(mrb, klass, "column_index", mrb_grn_obj_column_index,
+                    ARGS_REQ(1));
   klass = mrb_define_class(mrb, "Expr", klass);
   MRB_SET_INSTANCE_TT(klass, MRB_TT_DATA);
   mrb_iv_set(mrb, mrb_obj_value(klass), mrb_intern(mrb, "type"),
@@ -4594,6 +4612,7 @@ grn_mrb_init_expr(grn_ctx *ctx)
   MRB_GRN_CONST(SCAN_CONST);
   MRB_GRN_CONST(SCAN_COL1);
   MRB_GRN_CONST(SCAN_COL2);
+  MRB_GRN_CONST(SCAN_ACCESSOR);
   mrb_define_method(mrb, klass, "err", mrb_grn_err, ARGS_REQ(2));
   mrb_define_method(mrb, klass, "index", mrb_grn_expr_index, ARGS_REQ(1));
   mrb_define_method(mrb, klass, "codes_curr", mrb_grn_expr_codes_curr,
@@ -4601,8 +4620,6 @@ grn_mrb_init_expr(grn_ctx *ctx)
   mrb_define_method(mrb, klass, "each", mrb_grn_expr_each, ARGS_BLOCK());
   mrb_define_method(mrb, klass, "scan_normal",
                     mrb_grn_expr_scan_normal, ARGS_REQ(6));
-  mrb_define_method(mrb, klass, "scan_call",
-                    mrb_grn_expr_scan_call, ARGS_REQ(6));
   mrb_define_method(mrb, klass, "put_logical_op",
                     mrb_grn_expr_put_logical_op, ARGS_REQ(4));
   mrb_define_method(mrb, klass, "alloc_si",
@@ -4674,8 +4691,18 @@ grn_mrb_init_expr(grn_ctx *ctx)
                "          si.fin = index(c)" "\n"
                "          sis[i] = si" "\n"
                "          i += 1" "\n"
-               "          i, stat, si = scan_call \\" "\n"
-               "            sis, var, c,si, i, stat" "\n"
+               "          si.each_arg do |arg|" "\n"
+               "            if arg.db?" "\n"
+               "              index, sid = arg.column_index c.op" "\n"
+               "              si.put_index index, sid, 1 if index" "\n"
+               "            elsif arg.accessor?" "\n"
+               "              si.flags |= SCAN_ACCESSOR" "\n"
+               "              index, sid = arg.column_index c.op" "\n"
+               "              si.put_index index, sid, 1 if index" "\n"
+               "            else" "\n"
+               "              si.query = arg" "\n"
+               "            end" "\n"
+               "          end" "\n"
                "          si = nil" "\n"
                "        else" "\n"
                "          stat = SCAN_COL2" "\n"
