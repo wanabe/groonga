@@ -4250,70 +4250,29 @@ mrb_grn_obj_equal(mrb_state *mrb, mrb_value self)
 }
 
 static mrb_value
-mrb_grn_expr_scan_value(mrb_state *mrb, mrb_value self)
+mrb_grn_obj_name(mrb_state *mrb, mrb_value self)
 {
-  int i;
-  scan_stat stat;
-  scan_info **sis, *si = NULL;
   grn_ctx *ctx = (grn_ctx *)mrb->ud;
-  grn_obj *var;
-  grn_expr_code *c;
-  grn_expr *e;
-  mrb_value mrb_sis, mrb_var, mrb_c, mrb_si, ary;
-  mrb_get_args(mrb, "ooooii", &mrb_sis, &mrb_var, &mrb_c, &mrb_si, &i, &stat);
-  sis = (scan_info **)DATA_PTR(mrb_sis);
-  e = (grn_expr *)DATA_PTR(self);
-  var = (grn_obj *)DATA_PTR(mrb_var);
-  c = (grn_expr_code *)DATA_PTR(mrb_c);
-  if (mrb_test(mrb_si)) { si = (scan_info *)DATA_PTR(mrb_si); }
-      switch (stat) {
-      case SCAN_START :
-        if (!si) { SI_ALLOC_(si, i, c - e->codes, mrb_nil_value()); }
-        // fallthru
-      case SCAN_CONST :
-      case SCAN_VAR :
-        stat = SCAN_COL1;
-        if (si->nargs < 8) {
-          si->args[si->nargs++] = c->value;
-        }
-        break;
-      case SCAN_COL1 :
-        {
-          int j;
-          grn_obj inspected;
-          GRN_TEXT_INIT(&inspected, 0);
-          GRN_TEXT_PUTS(ctx, &inspected, "<");
-          grn_inspect_name(ctx, &inspected, c->value);
-          GRN_TEXT_PUTS(ctx, &inspected, ">: <");
-          grn_inspect(ctx, &inspected, (grn_obj *)e);
-          GRN_TEXT_PUTS(ctx, &inspected, ">");
-          ERR(GRN_INVALID_ARGUMENT,
-              "invalid expression: can't use column as a value: %.*s",
-              (int)GRN_TEXT_LEN(&inspected), GRN_TEXT_VALUE(&inspected));
-          GRN_OBJ_FIN(ctx, &inspected);
-          for (j = 0; j < i; j++) { SI_FREE(sis[j]); }
-          GRN_FREE(sis);
-          return mrb_nil_value();
-        }
-        stat = SCAN_COL2;
-        break;
-      case SCAN_COL2 :
-        break;
-      default :
-        break;
-      }
-  ary = mrb_ary_new_capa(mrb, 3);
-  mrb_ary_push(mrb, ary, mrb_fixnum_value(i));
-  mrb_ary_push(mrb, ary, mrb_fixnum_value(stat));
-  if (si) {
-    if (!mrb_test(mrb_si) || DATA_PTR(mrb_si) != si) {
-      mrb_si = grn_mrb_obj_new(mrb, si, "Scaninfo");
-    }
-    mrb_ary_push(mrb, ary, mrb_si);
-  } else {
-    mrb_ary_push(mrb, ary, mrb_nil_value());
-  }
-  return ary;
+  grn_obj inspected;
+  mrb_value str;
+  GRN_TEXT_INIT(&inspected, 0);
+  grn_inspect_name(ctx, &inspected, DATA_PTR(self));
+  str = mrb_str_new(mrb, GRN_TEXT_VALUE(&inspected), (int)GRN_TEXT_LEN(&inspected));
+  GRN_OBJ_FIN(ctx, &inspected);
+  return str;
+}
+
+static mrb_value
+mrb_grn_obj_inspect(mrb_state *mrb, mrb_value self)
+{
+  grn_ctx *ctx = (grn_ctx *)mrb->ud;
+  grn_obj inspected;
+  mrb_value str;
+  GRN_TEXT_INIT(&inspected, 0);
+  grn_inspect(ctx, &inspected, DATA_PTR(self));
+  str = mrb_str_new(mrb, GRN_TEXT_VALUE(&inspected), (int)GRN_TEXT_LEN(&inspected));
+  GRN_OBJ_FIN(ctx, &inspected);
+  return str;
 }
 
 static mrb_value
@@ -4554,7 +4513,14 @@ grn_mrb_init_expr(grn_ctx *ctx)
                     ARGS_REQ(1));
   mrb_define_method(mrb, klass, "push_arg", mrb_grn_scan_info_push_arg,
                     ARGS_REQ(1));
-  klass = mrb_define_class(mrb, "Expr", mrb->object_class);
+  klass = mrb_define_class(mrb, "Obj", mrb->object_class);
+  MRB_SET_INSTANCE_TT(klass, MRB_TT_DATA);
+  mrb_iv_set(mrb, mrb_obj_value(klass), mrb_intern(mrb, "type"),
+             mrb_voidp_value(&mrb_obj_type));
+  mrb_define_method(mrb, klass, "==", mrb_grn_obj_equal, ARGS_REQ(1));
+  mrb_define_method(mrb, klass, "name", mrb_grn_obj_name, ARGS_NONE());
+  mrb_define_method(mrb, klass, "inspect", mrb_grn_obj_inspect, ARGS_NONE());
+  klass = mrb_define_class(mrb, "Expr", klass);
   MRB_SET_INSTANCE_TT(klass, MRB_TT_DATA);
   mrb_iv_set(mrb, mrb_obj_value(klass), mrb_intern(mrb, "type"),
              mrb_voidp_value(&mrb_expr_type));
@@ -4588,6 +4554,8 @@ grn_mrb_init_expr(grn_ctx *ctx)
   MRB_GRN_CONST(SCAN_VAR);
   MRB_GRN_CONST(SCAN_PRE_CONST);
   MRB_GRN_CONST(SCAN_CONST);
+  MRB_GRN_CONST(SCAN_COL1);
+  MRB_GRN_CONST(SCAN_COL2);
   mrb_define_method(mrb, klass, "err", mrb_grn_err, ARGS_REQ(2));
   mrb_define_method(mrb, klass, "index", mrb_grn_expr_index, ARGS_REQ(1));
   mrb_define_method(mrb, klass, "codes_curr", mrb_grn_expr_codes_curr,
@@ -4595,20 +4563,12 @@ grn_mrb_init_expr(grn_ctx *ctx)
   mrb_define_method(mrb, klass, "each", mrb_grn_expr_each, ARGS_BLOCK());
   mrb_define_method(mrb, klass, "scan_normal",
                     mrb_grn_expr_scan_normal, ARGS_REQ(6));
-  mrb_define_method(mrb, klass, "scan_value",
-                    mrb_grn_expr_scan_value, ARGS_REQ(6));
   mrb_define_method(mrb, klass, "scan_call",
                     mrb_grn_expr_scan_call, ARGS_REQ(6));
   mrb_define_method(mrb, klass, "put_logical_op",
                     mrb_grn_expr_put_logical_op, ARGS_REQ(4));
   mrb_define_method(mrb, klass, "alloc_si",
                     mrb_grn_expr_alloc_si, ARGS_REQ(4));
-  klass = mrb_define_class(mrb, "Obj", mrb->object_class);
-  MRB_SET_INSTANCE_TT(klass, MRB_TT_DATA);
-  mrb_iv_set(mrb, mrb_obj_value(klass), mrb_intern(mrb, "type"),
-             mrb_voidp_value(&mrb_obj_type));
-  mrb_define_method(mrb, klass, "==",
-                    mrb_grn_obj_equal, ARGS_REQ(1));
   klass = mrb_define_class(mrb, "ExprCode", mrb->object_class);
   MRB_SET_INSTANCE_TT(klass, MRB_TT_DATA);
   mrb_iv_set(mrb, mrb_obj_value(klass), mrb_intern(mrb, "type"),
@@ -4648,8 +4608,22 @@ grn_mrb_init_expr(grn_ctx *ctx)
                "          stat == SCAN_CONST" "\n"
                "        end" "\n"
                "      when GRN_OP_GET_VALUE" "\n"
-               "        i, stat, si = scan_value \\" "\n"
-               "          sis, var, c,si, i, stat" "\n"
+               "        si = alloc_si sis, i, index(c) unless si" "\n"
+               "        case sis && stat" "\n"
+               "        when nil" "\n"
+               "          i = nil" "\n"
+               "        when SCAN_START, SCAN_CONST, SCAN_VAR" "\n"
+               "          stat = SCAN_COL1" "\n"
+               "          si.push_arg c.value" "\n"
+               "        when SCAN_COL1" "\n"
+               "          err GRN_INVALID_ARGUMENT," "\n"
+               "              \"invalid expression: can't use column\" + " "\n"
+               "              \" as a value: <#{c.value.name}>: \" + " "\n"
+               "              \"<#{inspect}>\"" "\n"
+               "          sis.free i" "\n"
+               "          i = nil" "\n"
+               "        when SCAN_COL2" "\n"
+               "        end" "\n"
                "      when GRN_OP_CALL" "\n"
                "        i, stat, si = scan_call \\" "\n"
                "          sis, var, c,si, i, stat" "\n"
