@@ -4060,9 +4060,10 @@ mrb_grn_scan_info_put_logical_op(mrb_state *mrb, mrb_value self)
   scan_info **sis;
   grn_ctx *ctx = (grn_ctx *)mrb->ud;
   grn_operator op;
-  mrb_value ret = mrb_true_value();
+  mrb_value ret;
   sis = DATA_PTR(self);
   mrb_get_args(mrb, "iii", &i, &op, &start);
+  ret = mrb_fixnum_value(i);
   j = i;
   while (j--) {
     scan_info *s_ = sis[j];
@@ -4212,39 +4213,6 @@ mrb_grn_scan_info_scan_normal(mrb_state *mrb, mrb_value self)
         }
       }
       si = NULL;
-  ary = mrb_ary_new_capa(mrb, 3);
-  mrb_ary_push(mrb, ary, mrb_fixnum_value(i));
-  mrb_ary_push(mrb, ary, mrb_fixnum_value(stat));
-  if (si) {
-    if (!mrb_test(mrb_si) || DATA_PTR(mrb_si) != si) {
-      mrb_si = grn_mrb_obj_new(mrb, si, "Scaninfo");
-    }
-    mrb_ary_push(mrb, ary, mrb_si);
-  } else {
-    mrb_ary_push(mrb, ary, mrb_nil_value());
-  }
-  return ary;
-}
-
-static mrb_value
-mrb_grn_scan_info_scan_logical_op(mrb_state *mrb, mrb_value self)
-{
-  int i;
-  scan_stat stat;
-  scan_info **sis, *si = NULL;
-  grn_ctx *ctx = (grn_ctx *)mrb->ud;
-  grn_obj *var;
-  grn_expr_code *c;
-  grn_expr *e;
-  mrb_value mrb_expr, mrb_var, mrb_c, mrb_si, ary;
-  sis = DATA_PTR(self);
-  mrb_get_args(mrb, "ooooii", &mrb_expr, &mrb_var, &mrb_c, &mrb_si, &i, &stat);
-  e = (grn_expr *)DATA_PTR(mrb_expr);
-  var = (grn_obj *)DATA_PTR(mrb_var);
-  c = (grn_expr_code *)DATA_PTR(mrb_c);
-  if (mrb_test(mrb_si)) { si = (scan_info *)DATA_PTR(mrb_si); }
-      if (!put_logical_op(ctx, sis, &i, c->op, c - e->codes)) { return mrb_nil_value(); }
-      stat = SCAN_START;
   ary = mrb_ary_new_capa(mrb, 3);
   mrb_ary_push(mrb, ary, mrb_fixnum_value(i));
   mrb_ary_push(mrb, ary, mrb_fixnum_value(stat));
@@ -4525,6 +4493,18 @@ mrb_grn_expr_each(mrb_state *mrb, mrb_value self)
 }
 
 static mrb_value
+mrb_grn_expr_index(mrb_state *mrb, mrb_value self)
+{
+  grn_expr *e;
+  grn_expr_code *c;
+  mrb_value mrb_c;
+  e = DATA_PTR(self);
+  mrb_get_args(mrb, "o", &mrb_c);
+  c = (grn_expr_code *)DATA_PTR(mrb_c);
+  return mrb_fixnum_value(c - e->codes);
+}
+
+static mrb_value
 mrb_grn_exprcode_op(mrb_state *mrb, mrb_value self)
 {
   grn_expr_code *c;
@@ -4583,8 +4563,6 @@ grn_mrb_init_expr(grn_ctx *ctx)
   MRB_GRN_CONST(SCAN_START);
   mrb_define_method(mrb, klass, "scan_normal",
                     mrb_grn_scan_info_scan_normal, ARGS_REQ(6));
-  mrb_define_method(mrb, klass, "scan_logical_op",
-                    mrb_grn_scan_info_scan_logical_op, ARGS_REQ(6));
   mrb_define_method(mrb, klass, "scan_push",
                     mrb_grn_scan_info_scan_push, ARGS_REQ(6));
   mrb_define_method(mrb, klass, "scan_value",
@@ -4613,6 +4591,7 @@ grn_mrb_init_expr(grn_ctx *ctx)
   MRB_SET_INSTANCE_TT(klass, MRB_TT_DATA);
   mrb_iv_set(mrb, mrb_obj_value(klass), mrb_intern(mrb, "type"),
              mrb_voidp_value(&mrb_expr_type));
+  mrb_define_method(mrb, klass, "index", mrb_grn_expr_index, ARGS_REQ(1));
   mrb_define_method(mrb, klass, "codes_curr", mrb_grn_expr_codes_curr,
                     ARGS_NONE());
   mrb_define_method(mrb, klass, "each", mrb_grn_expr_each, ARGS_BLOCK());
@@ -4645,8 +4624,8 @@ grn_mrb_init_expr(grn_ctx *ctx)
                "          expr, var, c,si, i, stat" "\n"
                "      when GRN_OP_AND, GRN_OP_OR, GRN_OP_AND_NOT," "\n"
                "           GRN_OP_ADJUST" "\n"
-               "        i, stat, si = sis.scan_logical_op \\" "\n"
-               "          expr, var, c,si, i, stat" "\n"
+               "        i = sis.put_logical_op i, c.op, expr.index(c)" "\n"
+               "        stat = SCAN_START" "\n"
                "      when GRN_OP_PUSH" "\n"
                "        i, stat, si = sis.scan_push \\" "\n"
                "          expr, var, c,si, i, stat" "\n"
