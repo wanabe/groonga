@@ -4638,7 +4638,7 @@ grn_mrb_init_expr(grn_ctx *ctx)
                "                  if index" "\n"
                "                    weight = ec.weight" "\n"
                "                    si.flags |= SCAN_ACCESSOR" "\n"
-               "                    if ec.value.accessor.next" "\n"
+               "                    if ec.value.to_accessor.next" "\n"
                "                      si.put_index ec.value, sid, weight" "\n"
                "                    else" "\n"
                "                      si.put_index index, sid, weight" "\n"
