@@ -4140,8 +4140,6 @@ mrb_grn_expr_scan_normal(mrb_state *mrb, mrb_value self)
       {
         int sid;
         grn_obj *index, *obj = DATA_PTR(mrb_obj);
-          sid = 0;
-          if (obj->header.type == GRN_EXPR) {
             uint32_t j;
             grn_expr_code *ec;
             grn_expr *e = (grn_expr *)obj;
@@ -4185,22 +4183,6 @@ mrb_grn_expr_scan_normal(mrb_state *mrb, mrb_value self)
                 }
               }
             }
-          } else if (GRN_DB_OBJP(obj)) {
-            if (grn_column_index(ctx, obj, c->op, &index, 1, &sid)) {
-              scan_info_put_index(ctx, si, index, sid, 1);
-            }
-          } else if (GRN_ACCESSORP(obj)) {
-            si->flags |= SCAN_ACCESSOR;
-            if (grn_column_index(ctx, obj, c->op, &index, 1, &sid)) {
-              if (((grn_accessor *)obj)->next) {
-                scan_info_put_index(ctx, si, obj, sid, 1);
-              } else {
-                scan_info_put_index(ctx, si, index, sid, 1);
-              }
-            }
-          } else {
-            si->query = obj;
-          }
       }
   return self;
 }
@@ -4254,6 +4236,14 @@ mrb_grn_obj_inspect(mrb_state *mrb, mrb_value self)
 }
 
 static mrb_value
+mrb_grn_obj_type(mrb_state *mrb, mrb_value self)
+{
+  grn_obj *obj;
+  obj = DATA_PTR(self);
+  return mrb_fixnum_value(obj->header.type);
+}
+
+static mrb_value
 mrb_grn_obj_db_p(mrb_state *mrb, mrb_value self)
 {
   grn_obj *obj;
@@ -4284,6 +4274,20 @@ mrb_grn_obj_column_index(mrb_state *mrb, mrb_value self)
   mrb_ary_push(mrb, ary, grn_mrb_obj_new(mrb, index, "Obj"));
   mrb_ary_push(mrb, ary, mrb_fixnum_value(sid));
   return ary;
+}
+
+static mrb_value
+mrb_grn_obj_to_accessor(mrb_state *mrb, mrb_value self)
+{
+  grn_obj *obj = DATA_PTR(self);
+  return grn_mrb_obj_new(mrb, obj, "Accessor");
+}
+
+static mrb_value
+mrb_grn_accessor_next(mrb_state *mrb, mrb_value self)
+{
+  grn_accessor *accessor = DATA_PTR(self);
+  return grn_mrb_obj_new(mrb, accessor->next, "Obj");
 }
 
 static mrb_value
@@ -4498,9 +4502,10 @@ mrb_grn_exprcode_flags(mrb_state *mrb, mrb_value self)
 
 static struct mrb_data_type mrb_scaninfov_type = { "ScaninfoVector", NULL };
 static struct mrb_data_type mrb_scaninfo_type = { "Scaninfo", NULL };
+static struct mrb_data_type mrb_obj_type = { "Obj", NULL };
+static struct mrb_data_type mrb_accessor_type = { "Accessor", NULL };
 static struct mrb_data_type mrb_expr_type = { "Expr", NULL };
 static struct mrb_data_type mrb_exprcode_type = { "ExprCode", NULL };
-static struct mrb_data_type mrb_obj_type = { "Obj", NULL };
 
 #define MRB_GRN_CONST(name) \
   mrb_define_const(mrb, klass, #name, mrb_fixnum_value(name))
@@ -4513,7 +4518,7 @@ void
 grn_mrb_init_expr(grn_ctx *ctx)
 {
   mrb_state *mrb = ctx->impl->mrb;
-  struct RClass *klass;
+  struct RClass *klass, *obj_class;
   klass = mrb_define_class(mrb, "ScaninfoVector", mrb->object_class);
   MRB_SET_INSTANCE_TT(klass, MRB_TT_DATA);
   mrb_iv_set(mrb, mrb_obj_value(klass), mrb_intern(mrb, "type"),
@@ -4541,19 +4546,28 @@ grn_mrb_init_expr(grn_ctx *ctx)
                     ARGS_REQ(1));
   mrb_define_method(mrb, klass, "each_arg", mrb_grn_scan_info_each_arg,
                     ARGS_BLOCK());
-  klass = mrb_define_class(mrb, "Obj", mrb->object_class);
+  obj_class = klass = mrb_define_class(mrb, "Obj", mrb->object_class);
   MRB_SET_INSTANCE_TT(klass, MRB_TT_DATA);
   mrb_iv_set(mrb, mrb_obj_value(klass), mrb_intern(mrb, "type"),
              mrb_voidp_value(&mrb_obj_type));
   mrb_define_method(mrb, klass, "==", mrb_grn_obj_equal, ARGS_REQ(1));
   mrb_define_method(mrb, klass, "name", mrb_grn_obj_name, ARGS_NONE());
   mrb_define_method(mrb, klass, "inspect", mrb_grn_obj_inspect, ARGS_NONE());
+  mrb_define_method(mrb, klass, "type", mrb_grn_obj_type, ARGS_NONE());
   mrb_define_method(mrb, klass, "db?", mrb_grn_obj_db_p, ARGS_NONE());
   mrb_define_method(mrb, klass, "accessor?", mrb_grn_obj_accessor_p,
                     ARGS_NONE());
   mrb_define_method(mrb, klass, "column_index", mrb_grn_obj_column_index,
                     ARGS_REQ(1));
-  klass = mrb_define_class(mrb, "Expr", klass);
+  mrb_define_method(mrb, klass, "to_accessor", mrb_grn_obj_to_accessor,
+                    ARGS_NONE());
+  klass = mrb_define_class(mrb, "Accessor", obj_class);
+  MRB_SET_INSTANCE_TT(klass, MRB_TT_DATA);
+  mrb_iv_set(mrb, mrb_obj_value(klass), mrb_intern(mrb, "type"),
+             mrb_voidp_value(&mrb_accessor_type));
+  mrb_define_method(mrb, klass, "next", mrb_grn_accessor_next,
+                    ARGS_NONE());
+  klass = mrb_define_class(mrb, "Expr", obj_class);
   MRB_SET_INSTANCE_TT(klass, MRB_TT_DATA);
   mrb_iv_set(mrb, mrb_obj_value(klass), mrb_intern(mrb, "type"),
              mrb_voidp_value(&mrb_expr_type));
@@ -4582,6 +4596,7 @@ grn_mrb_init_expr(grn_ctx *ctx)
   MRB_GRN_CONST(GRN_OP_GET_VALUE);
   MRB_GRN_CONST(GRN_OP_CALL);
   MRB_GRN_CONST(GRN_INVALID_ARGUMENT);
+  MRB_GRN_CONST(GRN_EXPR);
   MRB_GRN_CONST(GRN_EXPR_CODE_RELATIONAL_EXPRESSION);
   MRB_GRN_CONST(SCAN_PUSH);
   MRB_GRN_CONST(SCAN_START);
@@ -4630,7 +4645,24 @@ grn_mrb_init_expr(grn_ctx *ctx)
                "        sis[i] = si" "\n"
                "        i += 1" "\n"
                "        si.each_arg do |arg|" "\n"
-               "          scan_normal c, si, arg" "\n"
+               "          if arg.type == GRN_EXPR" "\n"
+               "            scan_normal c, si, arg" "\n"
+               "          elsif arg.db?" "\n"
+               "            index, sid = arg.column_index c.op" "\n"
+               "            si.put_index index, sid, 1 if index" "\n"
+               "          elsif arg.accessor?" "\n"
+               "            si.flags |= SCAN_ACCESSOR" "\n"
+               "            index, sid = arg.column_index c.op" "\n"
+               "            if index" "\n"
+               "              if arg.to_accessor.next" "\n"
+               "                si.put_index arg, sid, 1" "\n"
+               "              else" "\n"
+               "                si.put_index index, sid, 1" "\n"
+               "              end" "\n"
+               "            end" "\n"
+               "          else" "\n"
+               "            si.query = arg" "\n"
+               "          end" "\n"
                "        end" "\n"
                "        si = nil" "\n"
                "      when GRN_OP_AND, GRN_OP_OR, GRN_OP_AND_NOT," "\n"

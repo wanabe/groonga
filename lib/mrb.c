@@ -101,7 +101,9 @@ mrb_value
 grn_mrb_obj_new(mrb_state *mrb, void *ptr, const char *cname)
 {
   mrb_value obj, type;
-  struct RClass *klass = mrb_class_get(mrb, cname);
+  struct RClass *klass;
+  if (!ptr) { return mrb_nil_value(); }
+  klass = mrb_class_get(mrb, cname);
   type  = mrb_iv_get(mrb, mrb_obj_value(klass), mrb_intern(mrb, "type"));
   obj = mrb_obj_value(Data_Wrap_Struct(mrb, klass, mrb_voidp(type), ptr));
   return obj;
