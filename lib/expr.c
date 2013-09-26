@@ -4126,68 +4126,6 @@ mrb_grn_expr_put_logical_op(mrb_state *mrb, mrb_value self)
 }
 
 static mrb_value
-mrb_grn_expr_scan_normal(mrb_state *mrb, mrb_value self)
-{
-  scan_info *si = NULL;
-  grn_ctx *ctx = (grn_ctx *)mrb->ud;
-  grn_expr_code *c;
-  grn_expr *e;
-  mrb_value mrb_c, mrb_si, mrb_obj;
-  mrb_get_args(mrb, "ooo", &mrb_c, &mrb_si, &mrb_obj);
-  e = (grn_expr *)DATA_PTR(self);
-  c = (grn_expr_code *)DATA_PTR(mrb_c);
-  si = (scan_info *)DATA_PTR(mrb_si);
-      {
-        int sid;
-        grn_obj *index, *obj = DATA_PTR(mrb_obj);
-            uint32_t j;
-            grn_expr_code *ec;
-            grn_expr *e = (grn_expr *)obj;
-            for (j = e->codes_curr, ec = e->codes; j--; ec++) {
-              if (ec->value) {
-                switch (ec->value->header.type) {
-                case GRN_ACCESSOR :
-                  if (grn_column_index(ctx, ec->value, c->op, &index, 1, &sid)) {
-                    int32_t weight = get_weight(ctx, ec);
-                    mrb_value mrb_si, mrb_index;
-                    si->flags |= SCAN_ACCESSOR;
-                    mrb_si = grn_mrb_obj_new(mrb, si, "Scaninfo");
-                    if (((grn_accessor *)ec->value)->next) {
-                      mrb_index = grn_mrb_obj_new(mrb, ec->value, "Obj");
-                      mrb_funcall(mrb, mrb_si, "put_index", 3, mrb_index, mrb_fixnum_value(sid), mrb_fixnum_value(weight));
-                    } else {
-                      mrb_index = grn_mrb_obj_new(mrb, index, "Obj");
-                      mrb_funcall(mrb, mrb_si, "put_index", 3, mrb_index, mrb_fixnum_value(sid), mrb_fixnum_value(weight));
-                    }
-                  }
-                  break;
-                case GRN_COLUMN_FIX_SIZE :
-                case GRN_COLUMN_VAR_SIZE :
-                  if (grn_column_index(ctx, ec->value, c->op, &index, 1, &sid)) {
-                    scan_info_put_index(ctx, si, index, sid, get_weight(ctx, ec));
-                  }
-                  break;
-                case GRN_COLUMN_INDEX :
-                  sid = 0;
-                  index = ec->value;
-                  if (j > 2 &&
-                      ec[1].value &&
-                      ec[1].value->header.domain == GRN_DB_UINT32 &&
-                      ec[2].op == GRN_OP_GET_MEMBER) {
-                    sid = GRN_UINT32_VALUE(ec[1].value) + 1;
-                    j -= 2;
-                    ec += 2;
-                  }
-                  scan_info_put_index(ctx, si, index, sid, get_weight(ctx, ec));
-                  break;
-                }
-              }
-            }
-      }
-  return self;
-}
-
-static mrb_value
 mrb_grn_expr_alloc_si(mrb_state *mrb, mrb_value self)
 {
   int i;
@@ -4199,6 +4137,17 @@ mrb_grn_expr_alloc_si(mrb_state *mrb, mrb_value self)
   sis = DATA_PTR(mrb_sis);
   SI_ALLOC_(si, i, start, mrb_nil_value());
   return grn_mrb_obj_new(mrb, si, "Scaninfo");
+}
+
+static mrb_value
+mrb_grn_expr_aref(mrb_state *mrb, mrb_value self)
+{
+  int i;
+  grn_expr *e;
+  mrb_get_args(mrb, "i", &i);
+  e = DATA_PTR(self);
+  if (i >= e->codes_curr) { return mrb_nil_value(); }
+  return grn_mrb_obj_new(mrb, e->codes + i, "ExprCode");
 }
 
 static mrb_value
@@ -4244,6 +4193,14 @@ mrb_grn_obj_type(mrb_state *mrb, mrb_value self)
 }
 
 static mrb_value
+mrb_grn_obj_domain(mrb_state *mrb, mrb_value self)
+{
+  grn_obj *obj;
+  obj = DATA_PTR(self);
+  return mrb_fixnum_value(obj->header.domain);
+}
+
+static mrb_value
 mrb_grn_obj_db_p(mrb_state *mrb, mrb_value self)
 {
   grn_obj *obj;
@@ -4281,6 +4238,13 @@ mrb_grn_obj_to_accessor(mrb_state *mrb, mrb_value self)
 {
   grn_obj *obj = DATA_PTR(self);
   return grn_mrb_obj_new(mrb, obj, "Accessor");
+}
+
+static mrb_value
+mrb_grn_obj_to_expr(mrb_state *mrb, mrb_value self)
+{
+  grn_obj *obj = DATA_PTR(self);
+  return grn_mrb_obj_new(mrb, obj, "Expr");
 }
 
 static mrb_value
@@ -4500,6 +4464,15 @@ mrb_grn_exprcode_flags(mrb_state *mrb, mrb_value self)
   return mrb_fixnum_value(c->flags);
 }
 
+static mrb_value
+mrb_grn_exprcode_weight(mrb_state *mrb, mrb_value self)
+{
+  grn_ctx *ctx = (grn_ctx *)mrb->ud;
+  grn_expr_code *c;
+  c = DATA_PTR(self);
+  return mrb_fixnum_value(get_weight(ctx, c));
+}
+
 static struct mrb_data_type mrb_scaninfov_type = { "ScaninfoVector", NULL };
 static struct mrb_data_type mrb_scaninfo_type = { "Scaninfo", NULL };
 static struct mrb_data_type mrb_obj_type = { "Obj", NULL };
@@ -4554,6 +4527,7 @@ grn_mrb_init_expr(grn_ctx *ctx)
   mrb_define_method(mrb, klass, "name", mrb_grn_obj_name, ARGS_NONE());
   mrb_define_method(mrb, klass, "inspect", mrb_grn_obj_inspect, ARGS_NONE());
   mrb_define_method(mrb, klass, "type", mrb_grn_obj_type, ARGS_NONE());
+  mrb_define_method(mrb, klass, "domain", mrb_grn_obj_domain, ARGS_NONE());
   mrb_define_method(mrb, klass, "db?", mrb_grn_obj_db_p, ARGS_NONE());
   mrb_define_method(mrb, klass, "accessor?", mrb_grn_obj_accessor_p,
                     ARGS_NONE());
@@ -4561,6 +4535,7 @@ grn_mrb_init_expr(grn_ctx *ctx)
                     ARGS_REQ(1));
   mrb_define_method(mrb, klass, "to_accessor", mrb_grn_obj_to_accessor,
                     ARGS_NONE());
+  mrb_define_method(mrb, klass, "to_expr", mrb_grn_obj_to_expr, ARGS_NONE());
   klass = mrb_define_class(mrb, "Accessor", obj_class);
   MRB_SET_INSTANCE_TT(klass, MRB_TT_DATA);
   mrb_iv_set(mrb, mrb_obj_value(klass), mrb_intern(mrb, "type"),
@@ -4595,8 +4570,14 @@ grn_mrb_init_expr(grn_ctx *ctx)
   MRB_GRN_CONST(GRN_OP_PUSH);
   MRB_GRN_CONST(GRN_OP_GET_VALUE);
   MRB_GRN_CONST(GRN_OP_CALL);
+  MRB_GRN_CONST(GRN_OP_GET_MEMBER);
   MRB_GRN_CONST(GRN_INVALID_ARGUMENT);
   MRB_GRN_CONST(GRN_EXPR);
+  MRB_GRN_CONST(GRN_ACCESSOR);
+  MRB_GRN_CONST(GRN_COLUMN_FIX_SIZE);
+  MRB_GRN_CONST(GRN_COLUMN_VAR_SIZE);
+  MRB_GRN_CONST(GRN_COLUMN_INDEX);
+  MRB_GRN_CONST(GRN_DB_UINT32);
   MRB_GRN_CONST(GRN_EXPR_CODE_RELATIONAL_EXPRESSION);
   MRB_GRN_CONST(SCAN_PUSH);
   MRB_GRN_CONST(SCAN_START);
@@ -4611,12 +4592,11 @@ grn_mrb_init_expr(grn_ctx *ctx)
   mrb_define_method(mrb, klass, "codes_curr", mrb_grn_expr_codes_curr,
                     ARGS_NONE());
   mrb_define_method(mrb, klass, "each", mrb_grn_expr_each, ARGS_BLOCK());
-  mrb_define_method(mrb, klass, "scan_normal",
-                    mrb_grn_expr_scan_normal, ARGS_REQ(6));
   mrb_define_method(mrb, klass, "put_logical_op",
                     mrb_grn_expr_put_logical_op, ARGS_REQ(4));
   mrb_define_method(mrb, klass, "alloc_si",
                     mrb_grn_expr_alloc_si, ARGS_REQ(4));
+  mrb_define_method(mrb, klass, "[]", mrb_grn_expr_aref, ARGS_REQ(4));
   klass = mrb_define_class(mrb, "ExprCode", mrb->object_class);
   MRB_SET_INSTANCE_TT(klass, MRB_TT_DATA);
   mrb_iv_set(mrb, mrb_obj_value(klass), mrb_intern(mrb, "type"),
@@ -4624,6 +4604,7 @@ grn_mrb_init_expr(grn_ctx *ctx)
   mrb_define_method(mrb, klass, "op", mrb_grn_exprcode_op, ARGS_NONE());
   mrb_define_method(mrb, klass, "value", mrb_grn_exprcode_value, ARGS_NONE());
   mrb_define_method(mrb, klass, "flags", mrb_grn_exprcode_flags, ARGS_OPT(1));
+  mrb_define_method(mrb, klass, "weight", mrb_grn_exprcode_weight, ARGS_NONE());
   grn_mrb_eval(ctx,
                "class Expr" "\n"
                "  def build(sis, var, op, size)" "\n"
@@ -4646,7 +4627,42 @@ grn_mrb_init_expr(grn_ctx *ctx)
                "        i += 1" "\n"
                "        si.each_arg do |arg|" "\n"
                "          if arg.type == GRN_EXPR" "\n"
-               "            scan_normal c, si, arg" "\n"
+               "            e = arg.to_expr" "\n"
+               "            eci = 0" "\n"
+               "            while eci < e.codes_curr" "\n"
+               "              ec = e[eci]" "\n"
+               "              if ec.value" "\n"
+               "                case ec.value.type" "\n"
+               "                when GRN_ACCESSOR" "\n"
+               "                  index, sid = ec.value.column_index c.op" "\n"
+               "                  if index" "\n"
+               "                    weight = ec.weight" "\n"
+               "                    si.flags |= SCAN_ACCESSOR" "\n"
+               "                    if ec.value.accessor.next" "\n"
+               "                      si.put_index ec.value, sid, weight" "\n"
+               "                    else" "\n"
+               "                      si.put_index index, sid, weight" "\n"
+               "                    end" "\n"
+               "                  end" "\n"
+               "                when GRN_COLUMN_FIX_SIZE , GRN_COLUMN_VAR_SIZE" "\n"
+               "                  index, sid = ec.value.column_index c.op" "\n"
+               "                  si.put_index index, sid, ec.weight if index" "\n"
+               "                when GRN_COLUMN_INDEX" "\n"
+               "                  index, sid = ec.value, 0" "\n"
+               "                  if e[eci + 2] &&" "\n"
+               "                     e[eci + 1].value &&" "\n"
+               "                     e[eci + 1].value.domain == GRN_DB_UINT32 &&" "\n"
+               "                     e[eci + 2].op == GRN_OP_GET_MEMBER" "\n"
+               "                    sid = e[eci + 1].value" "\n"
+               "                    eci += 2" "\n"
+               "                    ec = e[eci]" "\n"
+               "                  end" "\n"
+               "                  si.put_index index, sid, ec.weight if index" "\n"
+               "                end" "\n"
+               "              end" "\n"
+               "              eci += 1" "\n"
+               "            end" "\n"
+               "            " "\n"
                "          elsif arg.db?" "\n"
                "            index, sid = arg.column_index c.op" "\n"
                "            si.put_index index, sid, 1 if index" "\n"
