@@ -26,9 +26,11 @@
 # include <mruby/variable.h>
 # include <mruby/data.h>
 # include <mruby/array.h>
+# include <mruby/dump.h>
 #endif
 
 #ifdef GRN_WITH_MRUBY
+extern const uint8_t scaninfo[];
 void grn_mrb_init_expr(grn_ctx *ctx);
 
 void
@@ -39,9 +41,14 @@ grn_ctx_impl_mrb_init(grn_ctx *ctx)
   if (grn_mruby_enabled && strcmp(grn_mruby_enabled, "no") == 0) {
     ctx->impl->mrb = NULL;
   } else {
+    int32_t n;
     ctx->impl->mrb = mrb_open();
     ctx->impl->mrb->ud = ctx;
     grn_mrb_init_expr(ctx);
+    n = mrb_read_irep(ctx->impl->mrb, scaninfo);
+    mrb_run(ctx->impl->mrb,
+            mrb_proc_new(ctx->impl->mrb, ctx->impl->mrb->irep[n]),
+            mrb_top_self(ctx->impl->mrb));
   }
 }
 
