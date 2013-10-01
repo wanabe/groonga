@@ -24,6 +24,7 @@
 #include "geo.h"
 #include "util.h"
 #include "normalizer_in.h"
+#include "expr.h"
 #include "mrb.h"
 #ifdef GRN_WITH_MRUBY
 # include <mruby/data.h>
@@ -3794,12 +3795,7 @@ res_add(grn_ctx *ctx, grn_hash *s, grn_rset_posinfo *pi, uint32_t score,
   }
 }
 
-#define SCAN_ACCESSOR                  (0x01)
-#define SCAN_PUSH                      (0x02)
-#define SCAN_POP                       (0x04)
-#define SCAN_PRE_CONST                 (0x08)
-
-typedef struct {
+struct _grn_scan_info {
   uint32_t start;
   uint32_t end;
   int32_t nargs;
@@ -3810,15 +3806,7 @@ typedef struct {
   grn_obj index;
   grn_obj *query;
   grn_obj *args[8];
-} scan_info;
-
-typedef enum {
-  SCAN_START = 0,
-  SCAN_VAR,
-  SCAN_COL1,
-  SCAN_COL2,
-  SCAN_CONST
-} scan_stat;
+};
 
 #define SI_FREE(si) do {\
   GRN_OBJ_FIN(ctx, &(si)->wv);\
@@ -3826,12 +3814,12 @@ typedef enum {
   GRN_FREE(si);\
 } while (0)
 
-#define SI_ALLOC_(si, i, st, ret) do {\
+#define SI_ALLOC(si, i, st) do {\
   if (!((si) = GRN_MALLOCN(scan_info, 1))) {\
     int j;\
     for (j = 0; j < i; j++) { SI_FREE(sis[j]); }\
     GRN_FREE(sis);\
-    return ret;\
+    return NULL;\
   }\
   GRN_INT32_INIT(&(si)->wv, GRN_OBJ_VECTOR);\
   GRN_PTR_INIT(&(si)->index, GRN_OBJ_VECTOR, GRN_ID_NIL);\
@@ -3840,7 +3828,20 @@ typedef enum {
   (si)->nargs = 0;\
   (si)->start = (st);\
 } while (0)
-#define SI_ALLOC(si, i, st) SI_ALLOC_(si, i, st, NULL)
+
+scan_info *
+grn_scan_info_alloc(grn_ctx *ctx, scan_info **sis, int i, int start)
+{
+  scan_info *si;
+  SI_ALLOC(si, i, start);
+  return si;
+}
+
+void
+grn_scan_info_free(grn_ctx *ctx, scan_info *si)
+{
+  SI_FREE(si);
+}
 
 static scan_info **
 put_logical_op(grn_ctx *ctx, scan_info **sis, int *ip, grn_operator op, int start)
@@ -3916,8 +3917,8 @@ put_logical_op(grn_ctx *ctx, scan_info **sis, int *ip, grn_operator op, int star
   GRN_OBJ_FIN(ctx, &strbuf);\
 } while (0)
 
-static void
-scan_info_put_index(grn_ctx *ctx, scan_info *si, grn_obj *index, uint32_t sid, int32_t weight)
+void
+grn_scan_info_put_index(grn_ctx *ctx, scan_info *si, grn_obj *index, uint32_t sid, int32_t weight)
 {
   GRN_PTR_PUT(ctx, &si->index, index);
   GRN_UINT32_PUT(ctx, &si->wv, sid);
@@ -3941,8 +3942,8 @@ scan_info_put_index(grn_ctx *ctx, scan_info *si, grn_obj *index, uint32_t sid, i
   }
 }
 
-static int32_t
-get_weight(grn_ctx *ctx, grn_expr_code *ec)
+int32_t
+grn_expr_code_get_weight(grn_ctx *ctx, grn_expr_code *ec)
 {
   if (ec->modify == 2 && ec[2].op == GRN_OP_STAR &&
       ec[1].value && ec[1].value->header.type == GRN_BULK) {
@@ -4038,575 +4039,69 @@ scan_info_init(grn_ctx *ctx, grn_obj *expr, grn_obj *var)
   return GRN_MALLOCN(scan_info *, m + m + o);
 }
 
-#ifdef GRN_WITH_MRUBY
-static mrb_value
-mrb_grn_scan_info_put_index(mrb_state *mrb, mrb_value self)
+int
+grn_scan_info_get_flags(scan_info *si)
 {
-  int sid;
-  int32_t weight;
-  scan_info *si;
-  grn_ctx *ctx = (grn_ctx *)mrb->ud;
-  mrb_value index;
-  si = DATA_PTR(self);
-  mrb_get_args(mrb, "oii", &index, &sid, &weight);
-  scan_info_put_index(ctx, si, DATA_PTR(index), sid, weight);
-  return self;
+  return si->flags;
 }
 
-static mrb_value
-mrb_grn_expr_put_logical_op(mrb_state *mrb, mrb_value self)
+void
+grn_scan_info_set_flags(scan_info *si, int flags)
 {
-  int start, nparens = 1, ndifops = 0, i, j, r = 0;
-  scan_info **sis;
-  grn_ctx *ctx = (grn_ctx *)mrb->ud;
-  grn_operator op;
-  mrb_value mrb_sis, ret;
-  mrb_get_args(mrb, "oiii", &mrb_sis, &i, &op, &start);
-  sis = (scan_info **)DATA_PTR(mrb_sis);
-  ret = mrb_fixnum_value(i);
-  j = i;
-  while (j--) {
-    scan_info *s_ = sis[j];
-    if (s_->flags & SCAN_POP) {
-      ndifops++;
-      nparens++;
-    } else {
-      if (s_->flags & SCAN_PUSH) {
-        if (!(--nparens)) {
-          if (!r) {
-            if (ndifops) {
-              if (j && op != GRN_OP_AND_NOT) {
-                nparens = 1;
-                ndifops = 0;
-                r = j;
-              } else {
-                SI_ALLOC_(s_, i, start, mrb_nil_value());
-                s_->flags = SCAN_POP;
-                s_->logical_op = op;
-                sis[i++] = s_;
-                ret = mrb_fixnum_value(i);
-                break;
-              }
-            } else {
-              s_->flags &= ~SCAN_PUSH;
-              s_->logical_op = op;
-              break;
-            }
-          } else {
-            if (ndifops) {
-              SI_ALLOC_(s_, i, start, mrb_nil_value());
-              s_->flags = SCAN_POP;
-              s_->logical_op = op;
-              sis[i++] = s_;
-              ret = mrb_fixnum_value(i);
-            } else {
-              s_->flags &= ~SCAN_PUSH;
-              s_->logical_op = op;
-              memcpy(&sis[i], &sis[j], sizeof(scan_info *) * (r - j));
-              memmove(&sis[j], &sis[r], sizeof(scan_info *) * (i - r));
-              memcpy(&sis[i + j - r], &sis[i], sizeof(scan_info *) * (r - j));
-            }
-            break;
-          }
-        }
-      } else {
-        if ((op == GRN_OP_AND_NOT) || (op != s_->logical_op)) {
-          ndifops++;
-        }
-      }
-    }
-  }
-  if (j < 0) {
-    ERR(GRN_INVALID_ARGUMENT, "unmatched nesting level");
-    for (j = 0; j < i; j++) { SI_FREE(sis[j]); }
-    GRN_FREE(sis);
-    return mrb_nil_value();
-  }
-  return ret;
-}
-
-static mrb_value
-mrb_grn_expr_alloc_si(mrb_state *mrb, mrb_value self)
-{
-  int i;
-  uint32_t start;
-  scan_info **sis, *si;
-  grn_ctx *ctx = (grn_ctx *)mrb->ud;
-  mrb_value mrb_sis;
-  mrb_get_args(mrb, "oii", &mrb_sis, &i, &start);
-  sis = DATA_PTR(mrb_sis);
-  SI_ALLOC_(si, i, start, mrb_nil_value());
-  return grn_mrb_obj_new(mrb, si, "Scaninfo");
-}
-
-static mrb_value
-mrb_grn_expr_aref(mrb_state *mrb, mrb_value self)
-{
-  int i;
-  grn_expr *e;
-  mrb_get_args(mrb, "i", &i);
-  e = DATA_PTR(self);
-  if (i >= e->codes_curr) { return mrb_nil_value(); }
-  return grn_mrb_obj_new(mrb, e->codes + i, "ExprCode");
-}
-
-static mrb_value
-mrb_grn_obj_equal(mrb_state *mrb, mrb_value self)
-{
-  mrb_value obj;
-  mrb_get_args(mrb, "o", &obj);
-  return DATA_PTR(self) == DATA_PTR(obj) ? mrb_true_value() : mrb_false_value();
-}
-
-static mrb_value
-mrb_grn_obj_name(mrb_state *mrb, mrb_value self)
-{
-  grn_ctx *ctx = (grn_ctx *)mrb->ud;
-  grn_obj inspected;
-  mrb_value str;
-  GRN_TEXT_INIT(&inspected, 0);
-  grn_inspect_name(ctx, &inspected, DATA_PTR(self));
-  str = mrb_str_new(mrb, GRN_TEXT_VALUE(&inspected), (int)GRN_TEXT_LEN(&inspected));
-  GRN_OBJ_FIN(ctx, &inspected);
-  return str;
-}
-
-static mrb_value
-mrb_grn_obj_inspect(mrb_state *mrb, mrb_value self)
-{
-  grn_ctx *ctx = (grn_ctx *)mrb->ud;
-  grn_obj inspected;
-  mrb_value str;
-  GRN_TEXT_INIT(&inspected, 0);
-  grn_inspect(ctx, &inspected, DATA_PTR(self));
-  str = mrb_str_new(mrb, GRN_TEXT_VALUE(&inspected), (int)GRN_TEXT_LEN(&inspected));
-  GRN_OBJ_FIN(ctx, &inspected);
-  return str;
-}
-
-static mrb_value
-mrb_grn_obj_type(mrb_state *mrb, mrb_value self)
-{
-  grn_obj *obj;
-  obj = DATA_PTR(self);
-  return mrb_fixnum_value(obj->header.type);
-}
-
-static mrb_value
-mrb_grn_obj_domain(mrb_state *mrb, mrb_value self)
-{
-  grn_obj *obj;
-  obj = DATA_PTR(self);
-  return mrb_fixnum_value(obj->header.domain);
-}
-
-static mrb_value
-mrb_grn_obj_db_p(mrb_state *mrb, mrb_value self)
-{
-  grn_obj *obj;
-  obj = DATA_PTR(self);
-  return GRN_DB_OBJP(obj) ? mrb_true_value() : mrb_false_value();
-}
-
-static mrb_value
-mrb_grn_obj_accessor_p(mrb_state *mrb, mrb_value self)
-{
-  grn_obj *obj;
-  obj = DATA_PTR(self);
-  return GRN_ACCESSORP(obj) ? mrb_true_value() : mrb_false_value();
-}
-
-static mrb_value
-mrb_grn_obj_column_index(mrb_state *mrb, mrb_value self)
-{
-  int ret, sid, op;
-  grn_ctx *ctx = (grn_ctx *)mrb->ud;
-  grn_obj *obj, *index;
-  mrb_value ary;
-  obj = DATA_PTR(self);
-  mrb_get_args(mrb, "i", &op);
-  ret = grn_column_index(ctx, obj, op, &index, 1, &sid);
-  if (!ret) { return mrb_nil_value(); }
-  ary = mrb_ary_new_capa(mrb, 2);
-  mrb_ary_push(mrb, ary, grn_mrb_obj_new(mrb, index, "Obj"));
-  mrb_ary_push(mrb, ary, mrb_fixnum_value(sid));
-  return ary;
-}
-
-static mrb_value
-mrb_grn_obj_to_accessor(mrb_state *mrb, mrb_value self)
-{
-  grn_obj *obj = DATA_PTR(self);
-  return grn_mrb_obj_new(mrb, obj, "Accessor");
-}
-
-static mrb_value
-mrb_grn_obj_to_expr(mrb_state *mrb, mrb_value self)
-{
-  grn_obj *obj = DATA_PTR(self);
-  return grn_mrb_obj_new(mrb, obj, "Expr");
-}
-
-static mrb_value
-mrb_grn_accessor_next(mrb_state *mrb, mrb_value self)
-{
-  grn_accessor *accessor = DATA_PTR(self);
-  return grn_mrb_obj_new(mrb, accessor->next, "Obj");
-}
-
-static mrb_value
-mrb_grn_scan_info_aref(mrb_state *mrb, mrb_value self)
-{
-  int i;
-  scan_info **sis;
-  sis = DATA_PTR(self);
-  mrb_get_args(mrb, "i", &i);
-  return grn_mrb_obj_new(mrb, sis[i], "Scaninfo");
-}
-
-static mrb_value
-mrb_grn_scan_info_aset(mrb_state *mrb, mrb_value self)
-{
-  int i;
-  scan_info **sis;
-  mrb_value si;
-  sis = DATA_PTR(self);
-  mrb_get_args(mrb, "io", &i, &si);
-  sis[i] = DATA_PTR(si);
-  return self;
-}
-
-static mrb_value
-mrb_grn_err(mrb_state *mrb, mrb_value self)
-{
-  char *msg;
-  grn_rc rc;
-  grn_ctx *ctx = (grn_ctx *)mrb->ud;
-  mrb_get_args(mrb, "iz", &rc, &msg);
-  ERR(rc, "%s", msg);
-  return self;
-}
-
-static mrb_value
-mrb_grn_scan_info_free(mrb_state *mrb, mrb_value self)
-{
-  int i, j;
-  scan_info **sis;
-  grn_ctx *ctx = (grn_ctx *)mrb->ud;
-  sis = DATA_PTR(self);
-  mrb_get_args(mrb, "i", &i);
-  for (j = 0; j < i; j++) { SI_FREE(sis[j]); }
-  GRN_FREE(sis);
-  return self;
-}
-
-static mrb_value
-mrb_grn_scan_info_flags(mrb_state *mrb, mrb_value self)
-{
-  scan_info *si;
-  si = DATA_PTR(self);
-  return mrb_fixnum_value(si->flags);
-}
-
-static mrb_value
-mrb_grn_scan_info_flags_set(mrb_state *mrb, mrb_value self)
-{
-  int flags;
-  scan_info *si;
-  si = DATA_PTR(self);
-  mrb_get_args(mrb, "i", &flags);
   si->flags = flags;
-  return self;
 }
 
-static mrb_value
-mrb_grn_scan_info_logical_op(mrb_state *mrb, mrb_value self)
+grn_operator
+grn_scan_info_get_logical_op(scan_info *si)
 {
-  scan_info *si;
-  si = DATA_PTR(self);
-  return mrb_fixnum_value(si->logical_op);
+  return si->logical_op;
 }
 
-static mrb_value
-mrb_grn_scan_info_logical_op_set(mrb_state *mrb, mrb_value self)
+void
+grn_scan_info_set_logical_op(scan_info *si, grn_operator logical_op)
 {
-  scan_info *si;
-  grn_operator logical_op;
-  si = DATA_PTR(self);
-  mrb_get_args(mrb, "i", &logical_op);
   si->logical_op = logical_op;
-  return self;
 }
 
-static mrb_value
-mrb_grn_scan_info_op_set(mrb_state *mrb, mrb_value self)
+void
+grn_scan_info_set_op(scan_info *si, grn_operator op)
 {
-  scan_info *si;
-  int op;
-  si = DATA_PTR(self);
-  mrb_get_args(mrb, "i", &op);
   si->op = op;
-  return self;
 }
 
-static mrb_value
-mrb_grn_scan_info_fin_set(mrb_state *mrb, mrb_value self)
+void
+grn_scan_info_set_end(scan_info *si, uint32_t end)
 {
-  scan_info *si;
-  int fin;
-  si = DATA_PTR(self);
-  mrb_get_args(mrb, "i", &fin);
-  si->end = fin;
-  return self;
+  si->end = end;
 }
 
-static mrb_value
-mrb_grn_scan_info_query_set(mrb_state *mrb, mrb_value self)
+void
+grn_scan_info_set_query(scan_info *si, grn_obj *query)
 {
-  scan_info *si;
-  mrb_value query;
-  si = DATA_PTR(self);
-  mrb_get_args(mrb, "o", &query);
-  si->query = DATA_PTR(query);
-  return self;
+  si->query = query;
 }
 
-static mrb_value
-mrb_grn_scan_info_push_arg(mrb_state *mrb, mrb_value self)
+grn_bool
+grn_scan_info_push_arg(scan_info *si, grn_obj *arg)
 {
-  scan_info *si;
-  mrb_value obj;
-  si = DATA_PTR(self);
-  mrb_get_args(mrb, "o", &obj);
   if (si->nargs < 8) {
-    si->args[si->nargs++] = DATA_PTR(obj);
+    si->args[si->nargs++] = arg;
+    return GRN_TRUE;
   }
-  return self;
+  return GRN_FALSE;
 }
 
-static mrb_value
-mrb_grn_scan_info_each_arg(mrb_state *mrb, mrb_value self)
+void
+grn_scan_info_each_arg(grn_ctx *ctx, scan_info *si,
+                       grn_scan_info_each_arg_callback callback, void *user_data)
 {
-  scan_info *si;
   grn_obj **p, **pe;
-  mrb_value b;
-  si = DATA_PTR(self);
-  mrb_get_args(mrb, "&", &b);
   p = si->args;
   pe = si->args + si->nargs;
   for (; p < pe; p++) {
-    mrb_yield(mrb, b, grn_mrb_obj_new(mrb, *p, "Obj"));
+    callback(ctx, *p, user_data);
   }
-  return self;
 }
-
-static mrb_value
-mrb_grn_expr_codes_curr(mrb_state *mrb, mrb_value self)
-{
-  grn_expr *e;
-  e = DATA_PTR(self);
-  return mrb_fixnum_value(e->codes_curr);
-}
-
-static mrb_value
-mrb_grn_expr_each(mrb_state *mrb, mrb_value self)
-{
-  grn_expr *e;
-  grn_expr_code *c, *ce;
-  mrb_value b;
-  e = DATA_PTR(self);
-  mrb_get_args(mrb, "&", &b);
-  for (c = e->codes, ce = &e->codes[e->codes_curr]; c < ce; c++) {
-    if (!mrb_test(mrb_yield(mrb, b, grn_mrb_obj_new(mrb, c, "ExprCode")))) {
-      break;
-    }
-  }
-  return self;
-}
-
-static mrb_value
-mrb_grn_expr_index(mrb_state *mrb, mrb_value self)
-{
-  grn_expr *e;
-  grn_expr_code *c;
-  mrb_value mrb_c;
-  e = DATA_PTR(self);
-  mrb_get_args(mrb, "o", &mrb_c);
-  c = (grn_expr_code *)DATA_PTR(mrb_c);
-  return mrb_fixnum_value(c - e->codes);
-}
-
-static mrb_value
-mrb_grn_exprcode_op(mrb_state *mrb, mrb_value self)
-{
-  grn_expr_code *c;
-  c = DATA_PTR(self);
-  return mrb_fixnum_value(c->op);
-}
-
-static mrb_value
-mrb_grn_exprcode_value(mrb_state *mrb, mrb_value self)
-{
-  grn_expr_code *c;
-  c = DATA_PTR(self);
-  return grn_mrb_obj_new(mrb, c->value, "Obj");
-}
-
-static mrb_value
-mrb_grn_exprcode_flags(mrb_state *mrb, mrb_value self)
-{
-  unsigned int flags;
-  grn_expr_code *c;
-  c = DATA_PTR(self);
-  if (mrb_get_args(mrb, "|i", &flags) == 1) {
-    return c->flags & flags ? mrb_true_value() : mrb_false_value();
-  }
-  return mrb_fixnum_value(c->flags);
-}
-
-static mrb_value
-mrb_grn_exprcode_weight(mrb_state *mrb, mrb_value self)
-{
-  grn_ctx *ctx = (grn_ctx *)mrb->ud;
-  grn_expr_code *c;
-  c = DATA_PTR(self);
-  return mrb_fixnum_value(get_weight(ctx, c));
-}
-
-static struct mrb_data_type mrb_scaninfov_type = { "ScaninfoVector", NULL };
-static struct mrb_data_type mrb_scaninfo_type = { "Scaninfo", NULL };
-static struct mrb_data_type mrb_obj_type = { "Obj", NULL };
-static struct mrb_data_type mrb_accessor_type = { "Accessor", NULL };
-static struct mrb_data_type mrb_expr_type = { "Expr", NULL };
-static struct mrb_data_type mrb_exprcode_type = { "ExprCode", NULL };
-
-#define MRB_GRN_CONST(name) \
-  mrb_define_const(mrb, klass, #name, mrb_fixnum_value(name))
-#ifdef mrb_voidp_value
-# undef mrb_voidp_value
-# define mrb_voidp_value(p) mrb_cptr_value(mrb, (p))
-#endif
-
-void
-grn_mrb_init_expr(grn_ctx *ctx)
-{
-  mrb_state *mrb = ctx->impl->mrb;
-  struct RClass *klass, *obj_class;
-  klass = mrb_define_class(mrb, "ScaninfoVector", mrb->object_class);
-  MRB_SET_INSTANCE_TT(klass, MRB_TT_DATA);
-  mrb_iv_set(mrb, mrb_obj_value(klass), mrb_intern(mrb, "type"),
-             mrb_voidp_value(&mrb_scaninfov_type));
-  mrb_define_method(mrb, klass, "[]", mrb_grn_scan_info_aref, ARGS_REQ(1));
-  mrb_define_method(mrb, klass, "[]=", mrb_grn_scan_info_aset, ARGS_REQ(2));
-  mrb_define_method(mrb, klass, "free", mrb_grn_scan_info_free, ARGS_REQ(1));
-  klass = mrb_define_class(mrb, "Scaninfo", mrb->object_class);
-  MRB_SET_INSTANCE_TT(klass, MRB_TT_DATA);
-  mrb_iv_set(mrb, mrb_obj_value(klass), mrb_intern(mrb, "type"),
-             mrb_voidp_value(&mrb_scaninfo_type));
-  mrb_define_method(mrb, klass, "put_index", mrb_grn_scan_info_put_index,
-                    ARGS_REQ(3));
-  mrb_define_method(mrb, klass, "flags", mrb_grn_scan_info_flags, ARGS_NONE());
-  mrb_define_method(mrb, klass, "flags=", mrb_grn_scan_info_flags_set,
-                    ARGS_REQ(1));
-  mrb_define_method(mrb, klass, "logical_op", mrb_grn_scan_info_logical_op,
-                    ARGS_NONE());
-  mrb_define_method(mrb, klass, "logical_op=", mrb_grn_scan_info_logical_op_set,
-                    ARGS_REQ(1));
-  mrb_define_method(mrb, klass, "op=", mrb_grn_scan_info_op_set, ARGS_REQ(1));
-  mrb_define_method(mrb, klass, "fin=", mrb_grn_scan_info_fin_set, ARGS_REQ(1));
-  mrb_define_method(mrb, klass, "query=", mrb_grn_scan_info_query_set, ARGS_REQ(1));
-  mrb_define_method(mrb, klass, "push_arg", mrb_grn_scan_info_push_arg,
-                    ARGS_REQ(1));
-  mrb_define_method(mrb, klass, "each_arg", mrb_grn_scan_info_each_arg,
-                    ARGS_BLOCK());
-  obj_class = klass = mrb_define_class(mrb, "Obj", mrb->object_class);
-  MRB_SET_INSTANCE_TT(klass, MRB_TT_DATA);
-  mrb_iv_set(mrb, mrb_obj_value(klass), mrb_intern(mrb, "type"),
-             mrb_voidp_value(&mrb_obj_type));
-  mrb_define_method(mrb, klass, "==", mrb_grn_obj_equal, ARGS_REQ(1));
-  mrb_define_method(mrb, klass, "name", mrb_grn_obj_name, ARGS_NONE());
-  mrb_define_method(mrb, klass, "inspect", mrb_grn_obj_inspect, ARGS_NONE());
-  mrb_define_method(mrb, klass, "type", mrb_grn_obj_type, ARGS_NONE());
-  mrb_define_method(mrb, klass, "domain", mrb_grn_obj_domain, ARGS_NONE());
-  mrb_define_method(mrb, klass, "db?", mrb_grn_obj_db_p, ARGS_NONE());
-  mrb_define_method(mrb, klass, "accessor?", mrb_grn_obj_accessor_p,
-                    ARGS_NONE());
-  mrb_define_method(mrb, klass, "column_index", mrb_grn_obj_column_index,
-                    ARGS_REQ(1));
-  mrb_define_method(mrb, klass, "to_accessor", mrb_grn_obj_to_accessor,
-                    ARGS_NONE());
-  mrb_define_method(mrb, klass, "to_expr", mrb_grn_obj_to_expr, ARGS_NONE());
-  klass = mrb_define_class(mrb, "Accessor", obj_class);
-  MRB_SET_INSTANCE_TT(klass, MRB_TT_DATA);
-  mrb_iv_set(mrb, mrb_obj_value(klass), mrb_intern(mrb, "type"),
-             mrb_voidp_value(&mrb_accessor_type));
-  mrb_define_method(mrb, klass, "next", mrb_grn_accessor_next,
-                    ARGS_NONE());
-  klass = mrb_define_class(mrb, "Expr", obj_class);
-  MRB_SET_INSTANCE_TT(klass, MRB_TT_DATA);
-  mrb_iv_set(mrb, mrb_obj_value(klass), mrb_intern(mrb, "type"),
-             mrb_voidp_value(&mrb_expr_type));
-  MRB_GRN_CONST(GRN_OP_OR);
-  MRB_GRN_CONST(GRN_OP_MATCH);
-  MRB_GRN_CONST(GRN_OP_NEAR);
-  MRB_GRN_CONST(GRN_OP_NEAR2);
-  MRB_GRN_CONST(GRN_OP_SIMILAR);
-  MRB_GRN_CONST(GRN_OP_PREFIX);
-  MRB_GRN_CONST(GRN_OP_SUFFIX);
-  MRB_GRN_CONST(GRN_OP_EQUAL);
-  MRB_GRN_CONST(GRN_OP_NOT_EQUAL);
-  MRB_GRN_CONST(GRN_OP_LESS);
-  MRB_GRN_CONST(GRN_OP_GREATER);
-  MRB_GRN_CONST(GRN_OP_LESS_EQUAL);
-  MRB_GRN_CONST(GRN_OP_GREATER_EQUAL);
-  MRB_GRN_CONST(GRN_OP_GEO_WITHINP5);
-  MRB_GRN_CONST(GRN_OP_GEO_WITHINP6);
-  MRB_GRN_CONST(GRN_OP_GEO_WITHINP8);
-  MRB_GRN_CONST(GRN_OP_TERM_EXTRACT);
-  MRB_GRN_CONST(GRN_OP_AND);
-  MRB_GRN_CONST(GRN_OP_OR);
-  MRB_GRN_CONST(GRN_OP_AND_NOT);
-  MRB_GRN_CONST(GRN_OP_ADJUST);
-  MRB_GRN_CONST(GRN_OP_PUSH);
-  MRB_GRN_CONST(GRN_OP_GET_VALUE);
-  MRB_GRN_CONST(GRN_OP_CALL);
-  MRB_GRN_CONST(GRN_OP_GET_MEMBER);
-  MRB_GRN_CONST(GRN_INVALID_ARGUMENT);
-  MRB_GRN_CONST(GRN_EXPR);
-  MRB_GRN_CONST(GRN_ACCESSOR);
-  MRB_GRN_CONST(GRN_COLUMN_FIX_SIZE);
-  MRB_GRN_CONST(GRN_COLUMN_VAR_SIZE);
-  MRB_GRN_CONST(GRN_COLUMN_INDEX);
-  MRB_GRN_CONST(GRN_DB_UINT32);
-  MRB_GRN_CONST(GRN_EXPR_CODE_RELATIONAL_EXPRESSION);
-  MRB_GRN_CONST(SCAN_PUSH);
-  MRB_GRN_CONST(SCAN_START);
-  MRB_GRN_CONST(SCAN_VAR);
-  MRB_GRN_CONST(SCAN_PRE_CONST);
-  MRB_GRN_CONST(SCAN_CONST);
-  MRB_GRN_CONST(SCAN_COL1);
-  MRB_GRN_CONST(SCAN_COL2);
-  MRB_GRN_CONST(SCAN_ACCESSOR);
-  mrb_define_method(mrb, klass, "err", mrb_grn_err, ARGS_REQ(2));
-  mrb_define_method(mrb, klass, "index", mrb_grn_expr_index, ARGS_REQ(1));
-  mrb_define_method(mrb, klass, "codes_curr", mrb_grn_expr_codes_curr,
-                    ARGS_NONE());
-  mrb_define_method(mrb, klass, "each", mrb_grn_expr_each, ARGS_BLOCK());
-  mrb_define_method(mrb, klass, "put_logical_op",
-                    mrb_grn_expr_put_logical_op, ARGS_REQ(4));
-  mrb_define_method(mrb, klass, "alloc_si",
-                    mrb_grn_expr_alloc_si, ARGS_REQ(4));
-  mrb_define_method(mrb, klass, "[]", mrb_grn_expr_aref, ARGS_REQ(4));
-  klass = mrb_define_class(mrb, "ExprCode", mrb->object_class);
-  MRB_SET_INSTANCE_TT(klass, MRB_TT_DATA);
-  mrb_iv_set(mrb, mrb_obj_value(klass), mrb_intern(mrb, "type"),
-             mrb_voidp_value(&mrb_exprcode_type));
-  mrb_define_method(mrb, klass, "op", mrb_grn_exprcode_op, ARGS_NONE());
-  mrb_define_method(mrb, klass, "value", mrb_grn_exprcode_value, ARGS_NONE());
-  mrb_define_method(mrb, klass, "flags", mrb_grn_exprcode_flags, ARGS_OPT(1));
-  mrb_define_method(mrb, klass, "weight", mrb_grn_exprcode_weight, ARGS_NONE());
-}
-#endif
 
 static scan_info **
 scan_info_build(grn_ctx *ctx, grn_obj *expr, int *n,
@@ -4678,19 +4173,19 @@ scan_info_build(grn_ctx *ctx, grn_obj *expr, int *n,
                 switch (ec->value->header.type) {
                 case GRN_ACCESSOR :
                   if (grn_column_index(ctx, ec->value, c->op, &index, 1, &sid)) {
-                    int32_t weight = get_weight(ctx, ec);
+                    int32_t weight = grn_expr_code_get_weight(ctx, ec);
                     si->flags |= SCAN_ACCESSOR;
                     if (((grn_accessor *)ec->value)->next) {
-                      scan_info_put_index(ctx, si, ec->value, sid, weight);
+                      grn_scan_info_put_index(ctx, si, ec->value, sid, weight);
                     } else {
-                      scan_info_put_index(ctx, si, index, sid, weight);
+                      grn_scan_info_put_index(ctx, si, index, sid, weight);
                     }
                   }
                   break;
                 case GRN_COLUMN_FIX_SIZE :
                 case GRN_COLUMN_VAR_SIZE :
                   if (grn_column_index(ctx, ec->value, c->op, &index, 1, &sid)) {
-                    scan_info_put_index(ctx, si, index, sid, get_weight(ctx, ec));
+                    grn_scan_info_put_index(ctx, si, index, sid, grn_expr_code_get_weight(ctx, ec));
                   }
                   break;
                 case GRN_COLUMN_INDEX :
@@ -4704,22 +4199,22 @@ scan_info_build(grn_ctx *ctx, grn_obj *expr, int *n,
                     j -= 2;
                     ec += 2;
                   }
-                  scan_info_put_index(ctx, si, index, sid, get_weight(ctx, ec));
+                  grn_scan_info_put_index(ctx, si, index, sid, grn_expr_code_get_weight(ctx, ec));
                   break;
                 }
               }
             }
           } else if (GRN_DB_OBJP(*p)) {
             if (grn_column_index(ctx, *p, c->op, &index, 1, &sid)) {
-              scan_info_put_index(ctx, si, index, sid, 1);
+              grn_scan_info_put_index(ctx, si, index, sid, 1);
             }
           } else if (GRN_ACCESSORP(*p)) {
             si->flags |= SCAN_ACCESSOR;
             if (grn_column_index(ctx, *p, c->op, &index, 1, &sid)) {
               if (((grn_accessor *)(*p))->next) {
-                scan_info_put_index(ctx, si, *p, sid, 1);
+                grn_scan_info_put_index(ctx, si, *p, sid, 1);
               } else {
-                scan_info_put_index(ctx, si, index, sid, 1);
+                grn_scan_info_put_index(ctx, si, index, sid, 1);
               }
             }
           } else {
@@ -4800,12 +4295,12 @@ scan_info_build(grn_ctx *ctx, grn_obj *expr, int *n,
           for (; p < pe; p++) {
             if (GRN_DB_OBJP(*p)) {
               if (grn_column_index(ctx, *p, c->op, &index, 1, &sid)) {
-                scan_info_put_index(ctx, si, index, sid, 1);
+                grn_scan_info_put_index(ctx, si, index, sid, 1);
               }
             } else if (GRN_ACCESSORP(*p)) {
               si->flags |= SCAN_ACCESSOR;
               if (grn_column_index(ctx, *p, c->op, &index, 1, &sid)) {
-                scan_info_put_index(ctx, si, index, sid, 1);
+                grn_scan_info_put_index(ctx, si, index, sid, 1);
               }
             } else {
               si->query = *p;
