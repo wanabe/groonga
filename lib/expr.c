@@ -26,13 +26,6 @@
 #include "normalizer_in.h"
 #include "expr.h"
 #include "mrb.h"
-#ifdef GRN_WITH_MRUBY
-# include <mruby/data.h>
-# include <mruby/class.h>
-# include <mruby/variable.h>
-# include <mruby/array.h>
-# include <mruby/string.h>
-#endif
 
 static inline int
 function_proc_p(grn_obj *obj)
@@ -4117,24 +4110,24 @@ scan_info_build(grn_ctx *ctx, grn_obj *expr, int *n,
   if (!(sis = scan_info_init(ctx, expr, var))) { return NULL; }
 #ifdef GRN_WITH_MRUBY
   if (ctx->impl->mrb) {
-    mrb_state *mrb = ctx->impl->mrb;
-    mrb_value msis, mexpr, mvar, mret;
-    int ai = mrb_gc_arena_save(mrb);
-    msis = grn_mrb_obj_new(mrb, sis, "ScaninfoVector");
-    mexpr = grn_mrb_obj_new(mrb, e, "Expr");
-    mvar = grn_mrb_obj_new(mrb, var, "Obj");
-    mret = mrb_funcall(mrb, mexpr, "build", 4, msis, mvar,
-                       mrb_fixnum_value(op), mrb_fixnum_value(size));
-    if (mrb->exc) {
-      mrb_value msg = mrb_inspect(mrb, mrb_obj_value(mrb->exc));
-      ERR(GRN_UNKNOWN_ERROR, "mruby error - %s", RSTRING_PTR(msg));
+    grn_obj ret, argv[6];
+    GRN_PTR_INIT(argv, 0, GRN_ID_NIL);
+    GRN_PTR_SET(ctx, argv, sis);
+    GRN_TEXT_INIT(argv + 1, GRN_OBJ_DO_SHALLOW_COPY);
+    GRN_TEXT_SETS(ctx, argv + 1, "ScaninfoVector");
+    GRN_PTR_INIT(argv + 2, 0, GRN_ID_NIL);
+    GRN_PTR_SET(ctx, argv + 2, var);
+    GRN_TEXT_INIT(argv + 3, GRN_OBJ_DO_SHALLOW_COPY);
+    GRN_TEXT_SETS(ctx, argv + 3, "Obj");
+    GRN_INT32_INIT(argv + 4, 0);
+    GRN_INT32_SET(ctx, argv + 4, op);
+    GRN_INT32_INIT(argv + 5, 0);
+    GRN_INT32_SET(ctx, argv + 5, size);
+    if (grn_mrb_send(ctx, (grn_obj *)e, "build", 4, argv, &ret) || ret.header.domain != GRN_DB_INT32) {
       sis = NULL;
-    } else if (mrb_test(mret)) {
-      *n = mrb_fixnum(mret);
     } else {
-      sis = NULL;
+      *n = GRN_INT32_VALUE(&ret);
     }
-    mrb_gc_arena_restore(mrb, ai);
     return sis;
   }
 #endif

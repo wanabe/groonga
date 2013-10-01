@@ -19,6 +19,7 @@
 #include "mrb.h"
 #include "ctx_impl.h"
 #include "expr.h"
+#include "util.h"
 
 #ifdef GRN_WITH_MRUBY
 # include <mruby/proc.h>
@@ -27,6 +28,7 @@
 # include <mruby/variable.h>
 # include <mruby/data.h>
 # include <mruby/array.h>
+# include <mruby/string.h>
 # include <mruby/dump.h>
 #endif
 
@@ -458,7 +460,7 @@ mrb_grn_expr_put_logical_op(mrb_state *mrb, mrb_value self)
   }
   if (j < 0) {
     ERR(GRN_INVALID_ARGUMENT, "unmatched nesting level");
-    for (j = 0; j < i; j++) { grn_scan_info_free(sis[j]); }
+    for (j = 0; j < i; j++) { grn_scan_info_free(ctx, sis[j]); }
     GRN_FREE(sis);
     return mrb_nil_value();
   }
@@ -659,6 +661,58 @@ grn_mrb_eval(grn_ctx *ctx, const char *script, int script_length)
   return result;
 }
 
+mrb_value
+grn_grn_to_mrb(grn_ctx *ctx, grn_obj **argv)
+{
+  grn_obj *obj = (*argv)++;
+  mrb_state *mrb = ctx->impl->mrb;
+  switch (obj->header.type) {
+  case GRN_EXPR:
+    return grn_mrb_obj_new(mrb, obj, "Expr");
+  case GRN_PTR:
+    {
+      const char *cname = GRN_TEXT_VALUE(*argv);
+      (*argv)++;
+      return grn_mrb_obj_new(mrb, GRN_PTR_VALUE(obj), cname);
+    }
+  default:
+    switch (obj->header.domain) {
+    case GRN_DB_INT32:
+      return mrb_fixnum_value(GRN_INT32_VALUE(obj));
+    }
+  }
+  return grn_mrb_obj_new(mrb, obj, "Obj");
+}
+
+grn_rc
+grn_mrb_send(grn_ctx *ctx, grn_obj *grn_recv, const char *name, int argc,
+             grn_obj *grn_argv, grn_obj *grn_object)
+{
+  int i, offset, ai;
+  grn_rc stat;
+  mrb_state *mrb = ctx->impl->mrb;
+  mrb_value ret, recv, *argv;
+  ai = mrb_gc_arena_save(mrb);
+  argv = GRN_MALLOCN(mrb_value, argc);
+  recv = grn_grn_to_mrb(ctx, &grn_recv);
+  for (i = offset = 0; i < argc; i++) {
+    argv[i] = grn_grn_to_mrb(ctx, &grn_argv);
+  }
+  ret = mrb_funcall_argv(mrb, recv, mrb_intern(mrb, name), argc, argv);
+  GRN_FREE(argv);
+  if (mrb->exc) {
+    mrb_value msg = mrb_inspect(mrb, mrb_obj_value(mrb->exc));
+    ERR(GRN_UNKNOWN_ERROR, "mruby error - %s", RSTRING_PTR(msg));
+    stat = GRN_UNKNOWN_ERROR;
+    mrb->exc = NULL;
+  } else {
+    GRN_VOID_INIT(grn_object);
+    stat = grn_mrb_to_grn(ctx, ret, grn_object);
+    mrb_gc_arena_restore(mrb, ai);
+  }
+  return stat;
+}
+
 grn_rc
 grn_mrb_to_grn(grn_ctx *ctx, mrb_value mrb_object, grn_obj *grn_object)
 {
@@ -669,6 +723,8 @@ grn_mrb_to_grn(grn_ctx *ctx, mrb_value mrb_object, grn_obj *grn_object)
     grn_obj_reinit(ctx, grn_object, GRN_DB_INT32, 0);
     GRN_INT32_SET(ctx, grn_object, mrb_fixnum(mrb_object));
     break;
+  case MRB_TT_FALSE :
+    grn_obj_reinit(ctx, grn_object, GRN_DB_VOID, 0);
   default :
     rc = GRN_INVALID_ARGUMENT;
     break;
