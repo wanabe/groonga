@@ -171,7 +171,17 @@ mrb_grn_scan_info_put_index(mrb_state *mrb, mrb_value self)
 }
 
 static mrb_value
-mrb_grn_scan_info_aref(mrb_state *mrb, mrb_value self)
+mrb_grn_scan_info_free(mrb_state *mrb, mrb_value self)
+{
+  scan_info *si;
+  grn_ctx *ctx = (grn_ctx *)mrb->ud;
+  si = DATA_PTR(self);
+  grn_scan_info_free(ctx, si);
+  return self;
+}
+
+static mrb_value
+mrb_grn_scan_info_v_aref(mrb_state *mrb, mrb_value self)
 {
   int i;
   scan_info **sis;
@@ -181,7 +191,7 @@ mrb_grn_scan_info_aref(mrb_state *mrb, mrb_value self)
 }
 
 static mrb_value
-mrb_grn_scan_info_aset(mrb_state *mrb, mrb_value self)
+mrb_grn_scan_info_v_aset(mrb_state *mrb, mrb_value self)
 {
   int i;
   scan_info **sis;
@@ -193,14 +203,11 @@ mrb_grn_scan_info_aset(mrb_state *mrb, mrb_value self)
 }
 
 static mrb_value
-mrb_grn_scan_info_free(mrb_state *mrb, mrb_value self)
+mrb_grn_scan_info_v_free(mrb_state *mrb, mrb_value self)
 {
-  int i, j;
   scan_info **sis;
   grn_ctx *ctx = (grn_ctx *)mrb->ud;
   sis = DATA_PTR(self);
-  mrb_get_args(mrb, "i", &i);
-  for (j = 0; j < i; j++) { grn_scan_info_free(ctx, sis[j]); }
   GRN_FREE(sis);
   return self;
 }
@@ -596,11 +603,12 @@ void grn_mrb_init_expr(grn_ctx *ctx)
                     ARGS_REQ(1));
   mrb_define_method(mrb, klass, "each_arg", mrb_grn_scan_info_each_arg,
                     ARGS_BLOCK());
+  mrb_define_method(mrb, klass, "free", mrb_grn_scan_info_free, ARGS_NONE());
   klass = mrb_grn_class(mrb, "ScaninfoVector", mrb->object_class,
                         &mrb_scaninfov_type);
-  mrb_define_method(mrb, klass, "[]", mrb_grn_scan_info_aref, ARGS_REQ(1));
-  mrb_define_method(mrb, klass, "[]=", mrb_grn_scan_info_aset, ARGS_REQ(2));
-  mrb_define_method(mrb, klass, "free", mrb_grn_scan_info_free, ARGS_REQ(1));
+  mrb_define_method(mrb, klass, "[]", mrb_grn_scan_info_v_aref, ARGS_REQ(1));
+  mrb_define_method(mrb, klass, "[]=", mrb_grn_scan_info_v_aset, ARGS_REQ(2));
+  mrb_define_method(mrb, klass, "free", mrb_grn_scan_info_v_free, ARGS_NONE());
   klass = mrb_grn_class(mrb, "ExprCode", mrb->object_class, &mrb_exprcode_type);
   mrb_define_method(mrb, klass, "op", mrb_grn_exprcode_op, ARGS_NONE());
   mrb_define_method(mrb, klass, "value", mrb_grn_exprcode_value, ARGS_NONE());

@@ -1,4 +1,11 @@
 class Expr
+  def free(sis, i)
+    i.times do |j|
+      si = sis[j]
+      si.free
+    end
+    sis.free
+  end
   def build(sis, var, op, size)
     i = 0
     stat = SCAN_START
@@ -100,7 +107,7 @@ class Expr
               "invalid expression: can't use column" +
               " as a value: <#{c.value.name}>: " +
               "<#{inspect}>"
-          sis.free i
+          free sis, i
           i = nil
         when SCAN_COL2
         end
@@ -139,7 +146,7 @@ class Expr
       si = sis[0]
       if si.flags & SCAN_PUSH == 0 || si.logical_op != op
         err GRN_INVALID_ARGUMENT, 'invalid expr'
-        sis.free i
+        free sis, i
         return nil
       else
         si.flags &= ~SCAN_PUSH
