@@ -45,7 +45,7 @@ class Expr
                      e[eci + 1].value &&
                      e[eci + 1].value.domain == GRN_DB_UINT32 &&
                      e[eci + 2].op == GRN_OP_GET_MEMBER
-                    sid = e[eci + 1].value
+                    sid = e[eci + 1].value.inspect.to_i + 1
                     eci += 2
                     ec = e[eci]
                   end
