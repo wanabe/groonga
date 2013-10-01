@@ -42,7 +42,7 @@ class Expr
             else
               s_.flags = SCAN_POP
               s_.logical_op = op
-              si[i] = s_
+              sis[i] = s_
               i += 1
               return i
             end
