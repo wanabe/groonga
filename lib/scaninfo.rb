@@ -84,8 +84,9 @@ class Expr
         i = put_logical_op sis, i, c.op, index(c)
         stat = SCAN_START
       when GRN_OP_PUSH
-        si = alloc_si sis, i, index(c) unless si
+        si = alloc_si index(c) unless si
         if !si
+          free sis, i
           i = nil
         elsif c.value == var
           stat = SCAN_VAR
@@ -95,9 +96,10 @@ class Expr
           stat == SCAN_CONST
         end
       when GRN_OP_GET_VALUE
-        si = alloc_si sis, i, index(c) unless si
+        si = alloc_si index(c) unless si
         case sis && stat
         when nil
+          free sis, i
           i = nil
         when SCAN_START, SCAN_CONST, SCAN_VAR
           stat = SCAN_COL1
@@ -112,8 +114,9 @@ class Expr
         when SCAN_COL2
         end
       when GRN_OP_CALL
-        si = alloc_si sis, i, index(c) unless si
+        si = alloc_si index(c) unless si
         if !si
+          free sis, i
           i = nil
         elsif c.flags(GRN_EXPR_CODE_RELATIONAL_EXPRESSION) ||
               index(c) + 1 == codes_curr

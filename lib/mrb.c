@@ -427,8 +427,13 @@ mrb_grn_expr_put_logical_op(mrb_state *mrb, mrb_value self)
                 ndifops = 0;
                 r = j;
               } else {
-                s_ = grn_scan_info_alloc(ctx, sis, i, start);
-                if (!s_) { return mrb_nil_value(); }
+                s_ = grn_scan_info_alloc(ctx, start);
+                if (!s_) {
+                  int j;
+                  for (j = 0; j < i; j++) { grn_scan_info_free(ctx, sis[j]); }
+                  GRN_FREE(sis);
+                  return mrb_nil_value();
+                }
                 grn_scan_info_set_flags(s_, SCAN_POP);
                 grn_scan_info_set_logical_op(s_, op);
                 sis[i++] = s_;
@@ -442,8 +447,13 @@ mrb_grn_expr_put_logical_op(mrb_state *mrb, mrb_value self)
             }
           } else {
             if (ndifops) {
-              s_ = grn_scan_info_alloc(ctx, sis, i, start);
-              if (!s_) { return mrb_nil_value(); }
+              s_ = grn_scan_info_alloc(ctx, start);
+              if (!s_) {
+                int j;
+                for (j = 0; j < i; j++) { grn_scan_info_free(ctx, sis[j]); }
+                GRN_FREE(sis);
+                return mrb_nil_value();
+              }
               grn_scan_info_set_flags(s_, SCAN_POP);
               grn_scan_info_set_logical_op(s_, op);
               sis[i++] = s_;
@@ -477,14 +487,11 @@ mrb_grn_expr_put_logical_op(mrb_state *mrb, mrb_value self)
 static mrb_value
 mrb_grn_expr_alloc_si(mrb_state *mrb, mrb_value self)
 {
-  int i;
-  uint32_t start;
-  scan_info **sis, *si;
+   uint32_t start;
+  scan_info *si;
   grn_ctx *ctx = (grn_ctx *)mrb->ud;
-  mrb_value mrb_sis;
-  mrb_get_args(mrb, "oii", &mrb_sis, &i, &start);
-  sis = DATA_PTR(mrb_sis);
-  si = grn_scan_info_alloc(ctx, sis, i, start);
+  mrb_get_args(mrb, "i", &start);
+  si = grn_scan_info_alloc(ctx, start);
   if (!si) { return mrb_nil_value(); }
   return grn_mrb_obj_new(mrb, si, "Scaninfo");
 }
@@ -585,7 +592,7 @@ void grn_mrb_init_expr(grn_ctx *ctx)
   mrb_define_method(mrb, klass, "put_logical_op",
                     mrb_grn_expr_put_logical_op, ARGS_REQ(4));
   mrb_define_method(mrb, klass, "alloc_si",
-                    mrb_grn_expr_alloc_si, ARGS_REQ(4));
+                    mrb_grn_expr_alloc_si, ARGS_REQ(1));
   klass = mrb_grn_class(mrb, "Scaninfo", mrb->object_class, &mrb_scaninfo_type);
   mrb_define_method(mrb, klass, "put_index", mrb_grn_scan_info_put_index,
                     ARGS_REQ(3));

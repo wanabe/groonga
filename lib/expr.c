@@ -3807,28 +3807,29 @@ struct _grn_scan_info {
   GRN_FREE(si);\
 } while (0)
 
+scan_info *
+grn_scan_info_alloc(grn_ctx *ctx, int st)
+{
+  scan_info *si = GRN_MALLOCN(scan_info, 1);
+  if (si) {
+    GRN_INT32_INIT(&si->wv, GRN_OBJ_VECTOR);
+    GRN_PTR_INIT(&si->index, GRN_OBJ_VECTOR, GRN_ID_NIL);
+    si->logical_op = GRN_OP_OR;
+    si->flags = SCAN_PUSH;
+    si->nargs = 0;
+    si->start = st;
+  }
+  return si;
+}
+
 #define SI_ALLOC(si, i, st) do {\
-  if (!((si) = GRN_MALLOCN(scan_info, 1))) {\
+  if (!((si) = grn_scan_info_alloc(ctx, st))) {\
     int j;\
     for (j = 0; j < i; j++) { SI_FREE(sis[j]); }\
     GRN_FREE(sis);\
     return NULL;\
   }\
-  GRN_INT32_INIT(&(si)->wv, GRN_OBJ_VECTOR);\
-  GRN_PTR_INIT(&(si)->index, GRN_OBJ_VECTOR, GRN_ID_NIL);\
-  (si)->logical_op = GRN_OP_OR;\
-  (si)->flags = SCAN_PUSH;\
-  (si)->nargs = 0;\
-  (si)->start = (st);\
 } while (0)
-
-scan_info *
-grn_scan_info_alloc(grn_ctx *ctx, scan_info **sis, int i, int start)
-{
-  scan_info *si;
-  SI_ALLOC(si, i, start);
-  return si;
-}
 
 void
 grn_scan_info_free(grn_ctx *ctx, scan_info *si)
