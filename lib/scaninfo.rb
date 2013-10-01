@@ -1,4 +1,80 @@
 class Expr
+  def put_logical_op(sis, i, op, start)
+    j = i
+    nparens, ndifops, r = 1, 0, 0
+    while (j -= 1) >= 0
+      s_ = sis[j]
+      if s_.flags & SCAN_POP != 0
+        ndifops += 1
+        nparens += 1
+      elsif s_.flags & SCAN_PUSH != 0
+        nparens -= 1
+        if nparens == 0
+          if r == 0
+            if ndifops != 0
+              if j != 0 && op != GRN_OP_AND_NOT
+                nparens = 1
+                ndifops = 0
+                r = j
+              else
+                s_ = alloc_si start
+                if !s_
+                  free sis, i
+                  return nil
+                else
+                  s_.flags = SCAN_POP
+                  s_.logical_op = op
+                  sis[i] = s_
+                  i += 1
+                  return i
+                end
+              end
+            else
+              s_.flags &= ~SCAN_PUSH
+              s_.logical_op = op
+              return i
+            end
+          elsif ndifops != 0
+            s_ = alloc_si start
+            if !s_
+              free sis, i
+              return nil
+            else
+              s_.flags = SCAN_POP
+              s_.logical_op = op
+              si[i] = s_
+              i += 1
+              return i
+            end
+          else
+            s_.flags &= ~SCAN_PUSH
+            s_.logical_op = op
+            k = i
+            (j...r).each do |l|
+              sis[k] = sis[l]
+              k += 1
+            end
+            k = j
+            (r...i).each do |l|
+              sis[k] = sis[l]
+              k += 1
+            end
+            l = i
+            ((i + j - r)...i).each do |k|
+              sis[k] = sis[l]
+              l += 1
+            end
+            return i
+          end
+        end
+      elsif op == GRN_OP_AND_NOT || op != s_.logical_op
+        ndifops += 1
+      end
+    end
+    err GRN_INVALID_ARGUMENT, "unmatched nesting level"
+    free sis, i
+    return nil
+  end
   def free(sis, i)
     i.times do |j|
       si = sis[j]
