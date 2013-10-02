@@ -38,6 +38,7 @@ mrb_value grn_mrb_eval(grn_ctx *ctx, const char *script, int script_length);
 grn_rc grn_mrb_send(grn_ctx *ctx, grn_obj *grn_recv, const char *name, int argc,
                     grn_obj *grn_argv, grn_obj *grn_object);
 grn_rc grn_mrb_to_grn(grn_ctx *ctx, mrb_value mrb_object, grn_obj *grn_object);
+mrb_value grn_mrb_from_grn(grn_ctx *ctx, grn_obj **argv);
 mrb_value grn_mrb_obj_new(mrb_state *mrb, void *ptr, const char *cname);
 #endif
 

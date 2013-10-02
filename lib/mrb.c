@@ -592,7 +592,7 @@ grn_mrb_eval(grn_ctx *ctx, const char *script, int script_length)
 }
 
 mrb_value
-grn_grn_to_mrb(grn_ctx *ctx, grn_obj **argv)
+grn_mrb_from_grn(grn_ctx *ctx, grn_obj **argv)
 {
   grn_obj *obj = (*argv)++;
   mrb_state *mrb = ctx->impl->mrb;
@@ -624,9 +624,9 @@ grn_mrb_send(grn_ctx *ctx, grn_obj *grn_recv, const char *name, int argc,
   mrb_value ret, recv, *argv;
   ai = mrb_gc_arena_save(mrb);
   argv = GRN_MALLOCN(mrb_value, argc);
-  recv = grn_grn_to_mrb(ctx, &grn_recv);
+  recv = grn_mrb_from_grn(ctx, &grn_recv);
   for (i = offset = 0; i < argc; i++) {
-    argv[i] = grn_grn_to_mrb(ctx, &grn_argv);
+    argv[i] = grn_mrb_from_grn(ctx, &grn_argv);
   }
   ret = mrb_funcall_argv(mrb, recv, mrb_intern(mrb, name), argc, argv);
   GRN_FREE(argv);
