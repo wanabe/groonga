@@ -140,7 +140,7 @@ mrb_grn_scan_info_each_arg_callback(grn_ctx *ctx, grn_obj *obj, void *user_data)
 {
   mrb_state *mrb = ctx->impl->mrb;
   mrb_value b = *(mrb_value *)user_data;
-  mrb_yield(mrb, b, grn_mrb_obj_new(mrb, obj, "Obj"));
+  mrb_yield(mrb, b, grn_mrb_obj_new(mrb, "Obj", obj));
   return GRN_TRUE;
 }
 
@@ -187,7 +187,7 @@ mrb_grn_scan_info_v_aref(mrb_state *mrb, mrb_value self)
   scan_info **sis;
   sis = DATA_PTR(self);
   mrb_get_args(mrb, "i", &i);
-  return grn_mrb_obj_new(mrb, sis[i], "Scaninfo");
+  return grn_mrb_obj_new(mrb, "Scaninfo", sis[i]);
 }
 
 static mrb_value
@@ -225,7 +225,7 @@ mrb_grn_exprcode_value(mrb_state *mrb, mrb_value self)
 {
   grn_expr_code *c;
   c = DATA_PTR(self);
-  return grn_mrb_obj_new(mrb, c->value, "Obj");
+  return grn_mrb_obj_new(mrb, "Obj", c->value);
 }
 
 static mrb_value
@@ -285,21 +285,21 @@ static mrb_value
 mrb_grn_accessor_next(mrb_state *mrb, mrb_value self)
 {
   grn_accessor *accessor = DATA_PTR(self);
-  return grn_mrb_obj_new(mrb, accessor->next, "Obj");
+  return grn_mrb_obj_new(mrb, "Obj", accessor->next);
 }
 
 static mrb_value
 mrb_grn_obj_to_accessor(mrb_state *mrb, mrb_value self)
 {
   grn_obj *obj = DATA_PTR(self);
-  return grn_mrb_obj_new(mrb, obj, "Accessor");
+  return grn_mrb_obj_new(mrb, "Accessor", obj);
 }
 
 static mrb_value
 mrb_grn_obj_to_expr(mrb_state *mrb, mrb_value self)
 {
   grn_obj *obj = DATA_PTR(self);
-  return grn_mrb_obj_new(mrb, obj, "Expr");
+  return grn_mrb_obj_new(mrb, "Expr", obj);
 }
 
 static mrb_value
@@ -348,7 +348,7 @@ mrb_grn_obj_column_index(mrb_state *mrb, mrb_value self)
   ret = grn_column_index(ctx, obj, op, &index, 1, &sid);
   if (!ret) { return mrb_nil_value(); }
   ary = mrb_ary_new_capa(mrb, 2);
-  mrb_ary_push(mrb, ary, grn_mrb_obj_new(mrb, index, "Obj"));
+  mrb_ary_push(mrb, ary, grn_mrb_obj_new(mrb, "Obj", index));
   mrb_ary_push(mrb, ary, mrb_fixnum_value(sid));
   return ary;
 }
@@ -361,7 +361,7 @@ mrb_grn_expr_aref(mrb_state *mrb, mrb_value self)
   mrb_get_args(mrb, "i", &i);
   e = DATA_PTR(self);
   if (i >= e->codes_curr) { return mrb_nil_value(); }
-  return grn_mrb_obj_new(mrb, e->codes + i, "ExprCode");
+  return grn_mrb_obj_new(mrb, "ExprCode", e->codes + i);
 }
 
 static mrb_value
@@ -393,7 +393,7 @@ mrb_grn_expr_each(mrb_state *mrb, mrb_value self)
   e = DATA_PTR(self);
   mrb_get_args(mrb, "&", &b);
   for (c = e->codes, ce = &e->codes[e->codes_curr]; c < ce; c++) {
-    if (!mrb_test(mrb_yield(mrb, b, grn_mrb_obj_new(mrb, c, "ExprCode")))) {
+    if (!mrb_test(mrb_yield(mrb, b, grn_mrb_obj_new(mrb, "ExprCode", c)))) {
       break;
     }
   }
@@ -409,7 +409,7 @@ mrb_grn_expr_alloc_si(mrb_state *mrb, mrb_value self)
   mrb_get_args(mrb, "i", &start);
   si = grn_scan_info_alloc(ctx, start);
   if (!si) { return mrb_nil_value(); }
-  return grn_mrb_obj_new(mrb, si, "Scaninfo");
+  return grn_mrb_obj_new(mrb, "Scaninfo", si);
 }
 
 static struct mrb_data_type mrb_scaninfo_type = { "Scaninfo", NULL };
@@ -598,12 +598,12 @@ grn_mrb_from_grn(grn_ctx *ctx, grn_obj **argv)
   mrb_state *mrb = ctx->impl->mrb;
   switch (obj->header.type) {
   case GRN_EXPR:
-    return grn_mrb_obj_new(mrb, obj, "Expr");
+    return grn_mrb_obj_new(mrb, "Expr", obj);
   case GRN_PTR:
     {
       const char *cname = GRN_TEXT_VALUE(*argv);
       (*argv)++;
-      return grn_mrb_obj_new(mrb, GRN_PTR_VALUE(obj), cname);
+      return grn_mrb_obj_new(mrb, cname, GRN_PTR_VALUE(obj));
     }
   default:
     switch (obj->header.domain) {
@@ -611,7 +611,7 @@ grn_mrb_from_grn(grn_ctx *ctx, grn_obj **argv)
       return mrb_fixnum_value(GRN_INT32_VALUE(obj));
     }
   }
-  return grn_mrb_obj_new(mrb, obj, "Obj");
+  return grn_mrb_obj_new(mrb, "Obj", obj);
 }
 
 grn_rc
@@ -664,7 +664,7 @@ grn_mrb_to_grn(grn_ctx *ctx, mrb_value mrb_object, grn_obj *grn_object)
 }
 
 mrb_value
-grn_mrb_obj_new(mrb_state *mrb, void *ptr, const char *cname)
+grn_mrb_obj_new(mrb_state *mrb, const char *cname, void *ptr)
 {
   mrb_value obj, type;
   struct RClass *klass;
