@@ -3959,80 +3959,6 @@ grn_expr_code_get_weight(grn_ctx *ctx, grn_expr_code *ec)
   }
 }
 
-static inline scan_info **
-scan_info_init(grn_ctx *ctx, grn_obj *expr, grn_obj *var)
-{
-  scan_stat stat;
-  int m = 0, o = 0;
-  grn_expr_code *c, *ce;
-  grn_expr *e = (grn_expr *)expr;
-  for (stat = SCAN_START, c = e->codes, ce = &e->codes[e->codes_curr]; c < ce; c++) {
-    switch (c->op) {
-    case GRN_OP_MATCH :
-    case GRN_OP_NEAR :
-    case GRN_OP_NEAR2 :
-    case GRN_OP_SIMILAR :
-    case GRN_OP_PREFIX :
-    case GRN_OP_SUFFIX :
-    case GRN_OP_EQUAL :
-    case GRN_OP_NOT_EQUAL :
-    case GRN_OP_LESS :
-    case GRN_OP_GREATER :
-    case GRN_OP_LESS_EQUAL :
-    case GRN_OP_GREATER_EQUAL :
-    case GRN_OP_GEO_WITHINP5 :
-    case GRN_OP_GEO_WITHINP6 :
-    case GRN_OP_GEO_WITHINP8 :
-    case GRN_OP_TERM_EXTRACT :
-      if (stat < SCAN_COL1 || SCAN_CONST < stat) { return NULL; }
-      stat = SCAN_START;
-      m++;
-      break;
-    case GRN_OP_AND :
-    case GRN_OP_OR :
-    case GRN_OP_AND_NOT :
-    case GRN_OP_ADJUST :
-      if (stat != SCAN_START) { return NULL; }
-      o++;
-      if (o >= m) { return NULL; }
-      break;
-    case GRN_OP_PUSH :
-      stat = (c->value == var) ? SCAN_VAR : SCAN_CONST;
-      break;
-    case GRN_OP_GET_VALUE :
-      switch (stat) {
-      case SCAN_START :
-      case SCAN_CONST :
-      case SCAN_VAR :
-        stat = SCAN_COL1;
-        break;
-      case SCAN_COL1 :
-        stat = SCAN_COL2;
-        break;
-      case SCAN_COL2 :
-        break;
-      default :
-        return NULL;
-        break;
-      }
-      break;
-    case GRN_OP_CALL :
-      if ((c->flags & GRN_EXPR_CODE_RELATIONAL_EXPRESSION) || c + 1 == ce) {
-        stat = SCAN_START;
-        m++;
-      } else {
-        stat = SCAN_COL2;
-      }
-      break;
-    default :
-      return NULL;
-      break;
-    }
-  }
-  if (stat || m != o + 1) { return NULL; }
-  return GRN_MALLOCN(scan_info *, m + m + o);
-}
-
 int
 grn_scan_info_get_flags(scan_info *si)
 {
@@ -4101,14 +4027,78 @@ static scan_info **
 scan_info_build(grn_ctx *ctx, grn_obj *expr, int *n,
                 grn_operator op, uint32_t size)
 {
-  int i;
-  scan_stat stat;
-  scan_info **sis, *si = NULL;
   grn_obj *var;
+  scan_stat stat;
+  int i, m = 0, o = 0;
+  scan_info **sis, *si = NULL;
   grn_expr_code *c, *ce;
   grn_expr *e = (grn_expr *)expr;
   if (!(var = grn_expr_get_var_by_offset(ctx, expr, 0))) { return NULL; }
-  if (!(sis = scan_info_init(ctx, expr, var))) { return NULL; }
+  for (stat = SCAN_START, c = e->codes, ce = &e->codes[e->codes_curr]; c < ce; c++) {
+    switch (c->op) {
+    case GRN_OP_MATCH :
+    case GRN_OP_NEAR :
+    case GRN_OP_NEAR2 :
+    case GRN_OP_SIMILAR :
+    case GRN_OP_PREFIX :
+    case GRN_OP_SUFFIX :
+    case GRN_OP_EQUAL :
+    case GRN_OP_NOT_EQUAL :
+    case GRN_OP_LESS :
+    case GRN_OP_GREATER :
+    case GRN_OP_LESS_EQUAL :
+    case GRN_OP_GREATER_EQUAL :
+    case GRN_OP_GEO_WITHINP5 :
+    case GRN_OP_GEO_WITHINP6 :
+    case GRN_OP_GEO_WITHINP8 :
+    case GRN_OP_TERM_EXTRACT :
+      if (stat < SCAN_COL1 || SCAN_CONST < stat) { return NULL; }
+      stat = SCAN_START;
+      m++;
+      break;
+    case GRN_OP_AND :
+    case GRN_OP_OR :
+    case GRN_OP_AND_NOT :
+    case GRN_OP_ADJUST :
+      if (stat != SCAN_START) { return NULL; }
+      o++;
+      if (o >= m) { return NULL; }
+      break;
+    case GRN_OP_PUSH :
+      stat = (c->value == var) ? SCAN_VAR : SCAN_CONST;
+      break;
+    case GRN_OP_GET_VALUE :
+      switch (stat) {
+      case SCAN_START :
+      case SCAN_CONST :
+      case SCAN_VAR :
+        stat = SCAN_COL1;
+        break;
+      case SCAN_COL1 :
+        stat = SCAN_COL2;
+        break;
+      case SCAN_COL2 :
+        break;
+      default :
+        return NULL;
+        break;
+      }
+      break;
+    case GRN_OP_CALL :
+      if ((c->flags & GRN_EXPR_CODE_RELATIONAL_EXPRESSION) || c + 1 == ce) {
+        stat = SCAN_START;
+        m++;
+      } else {
+        stat = SCAN_COL2;
+      }
+      break;
+    default :
+      return NULL;
+      break;
+    }
+  }
+  if (stat || m != o + 1) { return NULL; }
+  if (!(sis = GRN_MALLOCN(scan_info *, m + m + o))) { return NULL; }
 #ifdef GRN_WITH_MRUBY
   if (ctx->impl->mrb) {
     grn_obj ret, argv[6];
