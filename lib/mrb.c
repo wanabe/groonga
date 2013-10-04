@@ -23,6 +23,7 @@
 # include <mruby/proc.h>
 # include <mruby/compile.h>
 # include <mruby/variable.h>
+# include <mruby/data.h>
 # include <mruby/string.h>
 #endif
 
@@ -65,8 +66,7 @@ grn_mrb_send(grn_ctx *ctx, grn_obj *grn_recv, const char *name, int argc,
   /* TODO: convert args to mruby object */
   stat = grn_mrb_from_grn(ctx, grn_recv, &recv);
   if (stat) { return stat; }
-  ret = mrb_funcall(mrb, recv, name, 2,
-                    mrb_cptr_value(mrb, grn_recv), mrb_cptr_value(mrb, grn_argv));
+  ret = mrb_funcall(mrb, recv, name, 1, mrb_cptr_value(mrb, grn_argv));
   if (ctx->rc) {
     stat = ctx->rc;
     mrb->exc = NULL;
@@ -87,14 +87,16 @@ mrb_value
 grn_mrb_obj_new(grn_ctx *ctx, const char *cname, grn_obj *grn_object)
 {
   mrb_state *mrb = ctx->impl->mrb.state;
-  mrb_value klass;
+  mrb_value klass, obj;
 
   if (!grn_object) {
     return mrb_nil_value();
   }
   klass = mrb_const_get(mrb, mrb_obj_value(ctx->impl->mrb.module),
                         mrb_intern(mrb, cname));
-  return mrb_instance_new(mrb, klass);
+  obj = mrb_instance_new(mrb, klass);
+  DATA_PTR(obj) = grn_object;
+  return obj;
 }
 
 grn_rc

@@ -344,8 +344,8 @@ mrb_grn_expr_build(mrb_state *mrb, mrb_value self)
   grn_ctx *ctx = (grn_ctx *)mrb->ud;
   mrb_value recv, argv;
 
-  mrb_get_args(mrb, "oo", &recv, &argv);
-  e = mrb_cptr(recv);
+  mrb_get_args(mrb, "o", &argv);
+  e = DATA_PTR(self);
   grn_argv = mrb_cptr(argv);
   op = GRN_INT32_VALUE(&grn_argv[1]);
   size = GRN_INT32_VALUE(&grn_argv[2]);
