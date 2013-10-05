@@ -21,10 +21,21 @@
 #ifdef GRN_WITH_MRUBY
 #include <mruby.h>
 #include <mruby/class.h>
+#include <mruby/data.h>
 
 #include "../expr.h"
 #include "../util.h"
 #include "mrb_expr.h"
+
+static struct mrb_data_type mrb_grn_expr_type = { "Groonga_Expr", NULL };
+
+static mrb_value
+mrb_grn_expr_initialize(mrb_state *mrb, mrb_value self)
+{
+  DATA_TYPE(self) = &mrb_grn_expr_type;
+  DATA_PTR(self) = NULL;
+  return self;
+}
 
 static scan_info **
 scan_info_build(mrb_state *mrb, grn_expr *e, int *n,
@@ -348,7 +359,11 @@ grn_mrb_expr_init(grn_ctx *ctx)
 {
   mrb_state *mrb = ctx->impl->mrb.state;
   struct RClass *module = ctx->impl->mrb.module;
+  struct RClass *klass;
 
-  mrb_define_class_method(mrb, ctx->impl->mrb.module, "build", mrb_grn_expr_build, MRB_ARGS_REQ(2));
+  klass = mrb_define_class_under(mrb, module, "Expr", mrb->object_class);
+  MRB_SET_INSTANCE_TT(klass, MRB_TT_DATA);
+  mrb_define_method(mrb, klass, "initialize", mrb_grn_expr_initialize, MRB_ARGS_NONE());
+  mrb_define_method(mrb, klass, "build", mrb_grn_expr_build, MRB_ARGS_REQ(2));
 }
 #endif
