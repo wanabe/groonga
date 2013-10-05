@@ -25,6 +25,7 @@
 #include "expr.h"
 #include "util.h"
 #include "normalizer_in.h"
+#include "mrb.h"
 
 static inline int
 function_proc_p(grn_obj *obj)
@@ -4071,6 +4072,24 @@ scan_info_build(grn_ctx *ctx, grn_obj *expr, int *n,
   scan_info **sis, *si = NULL;
   grn_expr_code *c, *ce;
   grn_expr *e = (grn_expr *)expr;
+#ifdef GRN_WITH_MRUBY
+  if (ctx->impl->mrb.state) {
+    grn_obj ret, argv[4];
+    GRN_PTR_INIT(&argv[0], 0, GRN_ID_NIL);
+    GRN_INT32_INIT(&argv[1], 0);
+    GRN_INT32_SET(ctx, &argv[1], op);
+    GRN_UINT32_INIT(&argv[2], 0);
+    GRN_UINT32_SET(ctx, &argv[2], size);
+    GRN_PTR_INIT(&argv[3], 0, GRN_ID_NIL);
+    GRN_PTR_SET(ctx, &argv[3], n);
+    if (grn_mrb_send(ctx, (grn_obj *)e, "build", 4, argv, &ret)) {
+      sis = NULL;
+    } else {
+      sis = GRN_PTR_VALUE(&argv[0]);
+    }
+    return sis;
+  }
+#endif
   if (!(var = grn_expr_get_var_by_offset(ctx, expr, 0))) { return NULL; }
   for (stat = SCAN_START, c = e->codes, ce = &e->codes[e->codes_curr]; c < ce; c++) {
     switch (c->op) {
