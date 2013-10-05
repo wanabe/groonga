@@ -58,10 +58,12 @@ grn_mrb_send(grn_ctx *ctx, grn_obj *grn_recv, const char *name, int argc,
   int ai;
   grn_rc stat;
   mrb_state *mrb = ctx->impl->mrb.state;
+  mrb_value ret;
+
   ai = mrb_gc_arena_save(mrb);
-  /* TODO: convert groonga <=> mruby object */
-  mrb_funcall(mrb, mrb_obj_value(ctx->impl->mrb.module), name, 2,
-              mrb_cptr_value(mrb, grn_recv), mrb_cptr_value(mrb, grn_argv));
+  /* TODO: convert groonga object to mruby object */
+  ret = mrb_funcall(mrb, mrb_obj_value(ctx->impl->mrb.module), name, 2,
+                    mrb_cptr_value(mrb, grn_recv), mrb_cptr_value(mrb, grn_argv));
   if (ctx->rc) {
     stat = ctx->rc;
     mrb->exc = NULL;
@@ -71,7 +73,8 @@ grn_mrb_send(grn_ctx *ctx, grn_obj *grn_recv, const char *name, int argc,
     stat = GRN_UNKNOWN_ERROR;
     mrb->exc = NULL;
   } else {
-    stat = GRN_SUCCESS;
+    GRN_VOID_INIT(grn_ret);
+    stat = grn_mrb_to_grn(ctx, ret, grn_ret);
   }
   mrb_gc_arena_restore(mrb, ai);
   return stat;

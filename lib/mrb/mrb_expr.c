@@ -324,7 +324,7 @@ scan_info_build(mrb_state *mrb, grn_expr *e, int *n,
 static mrb_value
 mrb_grn_expr_build(mrb_state *mrb, mrb_value self)
 {
-  int *n;
+  int i;
   uint32_t size;
   scan_info **sis;
   grn_operator op;
@@ -338,10 +338,9 @@ mrb_grn_expr_build(mrb_state *mrb, mrb_value self)
   grn_argv = mrb_cptr(argv);
   op = GRN_INT32_VALUE(&grn_argv[1]);
   size = GRN_INT32_VALUE(&grn_argv[2]);
-  n = GRN_PTR_VALUE(&grn_argv[3]);
-  sis = scan_info_build(mrb, e, n, op, size);
+  sis = scan_info_build(mrb, e, &i, op, size);
   GRN_PTR_SET(ctx, &grn_argv[0], sis);
-  return self;
+  return mrb_fixnum_value(i);
 }
 
 void

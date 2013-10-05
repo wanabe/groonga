@@ -4062,17 +4062,16 @@ scan_info_build(grn_ctx *ctx, grn_obj *expr, int *n,
   grn_expr *e = (grn_expr *)expr;
 #ifdef GRN_WITH_MRUBY
   if (ctx->impl->mrb.state) {
-    grn_obj ret, argv[4];
+    grn_obj ret, argv[3];
     GRN_PTR_INIT(&argv[0], 0, GRN_ID_NIL);
     GRN_INT32_INIT(&argv[1], 0);
     GRN_INT32_SET(ctx, &argv[1], op);
     GRN_UINT32_INIT(&argv[2], 0);
     GRN_UINT32_SET(ctx, &argv[2], size);
-    GRN_PTR_INIT(&argv[3], 0, GRN_ID_NIL);
-    GRN_PTR_SET(ctx, &argv[3], n);
-    if (grn_mrb_send(ctx, (grn_obj *)e, "build", 4, argv, &ret)) {
+    if (grn_mrb_send(ctx, (grn_obj *)e, "build", 3, argv, &ret) || ret.header.domain != GRN_DB_INT32) {
       sis = NULL;
     } else {
+      *n = GRN_INT32_VALUE(&ret);
       sis = GRN_PTR_VALUE(&argv[0]);
     }
     return sis;
