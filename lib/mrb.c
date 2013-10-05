@@ -57,16 +57,27 @@ grn_rc
 grn_mrb_send(grn_ctx *ctx, grn_obj *grn_recv, const char *name, int argc,
              grn_obj *grn_argv, grn_obj *grn_ret)
 {
-  int ai;
+  int i, ai;
   grn_rc stat;
   mrb_state *mrb = ctx->impl->mrb.state;
-  mrb_value ret, recv;
+  mrb_value ret, recv, *argv;
 
   ai = mrb_gc_arena_save(mrb);
-  /* TODO: convert args to mruby object */
-  stat = grn_mrb_from_grn(ctx, grn_recv, &recv);
-  if (stat) { return stat; }
-  ret = mrb_funcall(mrb, recv, name, 1, mrb_cptr_value(mrb, grn_argv));
+  if (grn_mrb_from_grn(ctx, grn_recv, &recv)) {
+    ERR(GRN_INVALID_ARGUMENT, "Can't convert receiver Groonga => mruby");
+    return GRN_INVALID_ARGUMENT;
+  }
+  argv = GRN_MALLOCN(mrb_value, argc);
+  for (i = 0; i < argc; i++) {
+    stat = grn_mrb_from_grn(ctx, &grn_argv[i], &argv[i]);
+    if (stat) {
+      ERR(GRN_INVALID_ARGUMENT, "Can't convert argv[%d] Groonga => mruby", i);
+      GRN_FREE(argv);
+      return GRN_INVALID_ARGUMENT;
+    }
+  }
+  ret = mrb_funcall_argv(mrb, recv, mrb_intern(mrb, name), argc, argv);
+  GRN_FREE(argv);
   if (ctx->rc) {
     stat = ctx->rc;
     mrb->exc = NULL;
@@ -115,6 +126,9 @@ grn_mrb_to_grn(grn_ctx *ctx, mrb_value mrb_object, grn_obj *grn_object)
                  RSTRING_PTR(mrb_object),
                  RSTRING_LEN(mrb_object));
     break;
+  case MRB_TT_FALSE :
+    grn_obj_reinit(ctx, grn_object, GRN_DB_VOID, 0);
+    break;
   default :
     rc = GRN_INVALID_ARGUMENT;
     break;
@@ -131,6 +145,21 @@ grn_mrb_from_grn(grn_ctx *ctx, grn_obj *grn_object, mrb_value *mrb_object)
   switch (grn_object->header.type) {
   case GRN_EXPR:
     *mrb_object = grn_mrb_obj_new(ctx, "Expr", grn_object);
+    break;
+  case GRN_PTR:
+    *mrb_object = grn_mrb_obj_new(ctx, "Object", grn_object);
+    break;
+  case GRN_BULK:
+    switch (grn_object->header.domain) {
+    case GRN_DB_INT32:
+      *mrb_object = mrb_fixnum_value(GRN_INT32_VALUE(grn_object));
+      break;
+    case GRN_DB_UINT32:
+      *mrb_object = mrb_fixnum_value(GRN_UINT32_VALUE(grn_object));
+      break;
+    default:
+      rc = GRN_INVALID_ARGUMENT;
+    }
     break;
   default:
     rc = GRN_INVALID_ARGUMENT;
